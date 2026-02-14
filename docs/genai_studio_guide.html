@@ -1,0 +1,1298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GenAI Studio Python SDK — Developer Guide v1.2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #1a1a2e;
+  --paper: #f8f6f1;
+  --accent: #c0392b;
+  --accent-soft: #e74c3c22;
+  --gold: #d4a017;
+  --gold-soft: #d4a01718;
+  --teal: #16a085;
+  --teal-soft: #16a08515;
+  --purple: #6c3483;
+  --purple-soft: #6c348312;
+  --code-bg: #1e1e2e;
+  --code-fg: #cdd6f4;
+  --code-comment: #6c7086;
+  --code-keyword: #cba6f7;
+  --code-string: #a6e3a1;
+  --code-func: #89b4fa;
+  --code-num: #fab387;
+  --code-decorator: #f9e2af;
+  --code-class: #f9e2af;
+  --sidebar-w: 280px;
+  --serif: 'DM Serif Display', Georgia, serif;
+  --sans: 'Source Sans 3', -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --border: #d5d0c6;
+  --muted: #6b6560;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { scroll-behavior: smooth; font-size: 17px; }
+
+body {
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--paper);
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── SIDEBAR NAV ─────────────────────────────────── */
+nav.sidebar {
+  position: fixed; top: 0; left: 0;
+  width: var(--sidebar-w); height: 100vh;
+  background: var(--ink);
+  color: #b8b5ad;
+  padding: 2rem 0;
+  overflow-y: auto;
+  z-index: 100;
+  border-right: 3px solid var(--accent);
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+
+nav.sidebar .logo {
+  padding: 0 1.5rem 1.5rem;
+  border-bottom: 1px solid #2a2a3e;
+  margin-bottom: 1rem;
+}
+
+nav.sidebar .logo h1 {
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  color: #fff;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+nav.sidebar .logo span {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--gold);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  display: block;
+  margin-top: 0.3rem;
+}
+
+nav.sidebar .nav-section {
+  padding: 0.6rem 1.5rem 0.2rem;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: #555;
+  font-weight: 600;
+}
+
+nav.sidebar a {
+  display: block;
+  padding: 0.35rem 1.5rem;
+  color: #9a9690;
+  text-decoration: none;
+  font-size: 0.82rem;
+  transition: all 0.15s;
+  border-left: 3px solid transparent;
+}
+
+nav.sidebar a:hover,
+nav.sidebar a.active {
+  color: #fff;
+  background: rgba(255,255,255,0.04);
+  border-left-color: var(--accent);
+}
+
+/* ─── MAIN CONTENT ────────────────────────────────── */
+main {
+  margin-left: var(--sidebar-w);
+  max-width: 920px;
+  padding: 3rem 4rem 6rem;
+}
+
+/* ─── HERO ────────────────────────────────────────── */
+.hero {
+  padding: 2.5rem 0 3rem;
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: 3rem;
+}
+
+.hero h1 {
+  font-family: var(--serif);
+  font-size: 3rem;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  margin-bottom: 0.5rem;
+}
+
+.hero h1 em { color: var(--accent); font-style: italic; }
+
+.hero .subtitle {
+  font-size: 1.15rem;
+  color: var(--muted);
+  max-width: 36em;
+}
+
+.hero .meta {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 1.2rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.hero .meta .badge {
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.15rem 0.6rem;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+/* ─── SECTIONS ────────────────────────────────────── */
+section { margin-bottom: 3.5rem; }
+
+section > h2 {
+  font-family: var(--serif);
+  font-size: 1.9rem;
+  letter-spacing: -0.02em;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.2rem;
+}
+
+section > h3 {
+  font-family: var(--serif);
+  font-size: 1.3rem;
+  margin: 2rem 0 0.8rem;
+  color: var(--ink);
+}
+
+section > h4 {
+  font-family: var(--sans);
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 1.5rem 0 0.5rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.78rem;
+}
+
+p { margin-bottom: 1rem; max-width: 65ch; }
+
+/* ─── CODE BLOCKS ─────────────────────────────────── */
+pre {
+  background: var(--code-bg);
+  color: var(--code-fg);
+  padding: 1.3rem 1.5rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.65;
+  margin: 1rem 0 1.5rem;
+  position: relative;
+  border: 1px solid #2a2a40;
+}
+
+pre .label {
+  position: absolute;
+  top: 0; right: 0;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.58rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 0 7px 0 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+
+p code, li code, td code {
+  background: #e8e4dc;
+  padding: 0.12em 0.4em;
+  border-radius: 4px;
+  font-size: 0.82em;
+  color: var(--accent);
+}
+
+.kw { color: var(--code-keyword); }
+.s { color: var(--code-string); }
+.fn { color: var(--code-func); }
+.cm { color: var(--code-comment); font-style: italic; }
+.n { color: var(--code-num); }
+.dc { color: var(--code-decorator); }
+.cl { color: var(--code-class); }
+.op { color: #89dceb; }
+.bi { color: #94e2d5; }
+
+/* ─── CALLOUT BOXES ───────────────────────────────── */
+.callout {
+  padding: 1.1rem 1.4rem;
+  border-radius: 6px;
+  margin: 1.2rem 0 1.5rem;
+  border-left: 4px solid;
+  font-size: 0.92rem;
+}
+
+.callout p:last-child { margin-bottom: 0; }
+
+.callout.info {
+  background: #eaf4fb;
+  border-color: #2980b9;
+}
+
+.callout.warn {
+  background: #fef9e7;
+  border-color: var(--gold);
+}
+
+.callout.danger {
+  background: #fdedec;
+  border-color: var(--accent);
+}
+
+.callout.tip {
+  background: var(--teal-soft);
+  border-color: var(--teal);
+}
+
+.callout .callout-title {
+  font-weight: 700;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.3rem;
+}
+
+/* ─── ARCHITECTURE DIAGRAM ────────────────────────── */
+.arch-diagram {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2rem;
+  margin: 1.5rem 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  overflow-x: auto;
+}
+
+.arch-diagram .layer {
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  padding: 0.8rem 1.2rem;
+  margin-bottom: 0.5rem;
+  position: relative;
+}
+
+.arch-diagram .layer.client { border-color: var(--teal); background: var(--teal-soft); }
+.arch-diagram .layer.proxy { border-color: var(--gold); background: var(--gold-soft); }
+.arch-diagram .layer.backend { border-color: var(--purple); background: var(--purple-soft); }
+.arch-diagram .layer.rag { border-color: var(--accent); background: var(--accent-soft); }
+
+.arch-diagram .layer-label {
+  font-weight: 700;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.3rem;
+}
+
+.arch-diagram .arrow {
+  text-align: center;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1.6;
+}
+
+/* ─── TABLE OF METHODS ────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 1.5rem;
+  font-size: 0.88rem;
+}
+
+th {
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+td {
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+tr:hover td { background: rgba(0,0,0,0.02); }
+
+/* ─── FLOW DIAGRAM ────────────────────────────────── */
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 1rem 0 1.5rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+.flow .step {
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.4rem 0.8rem;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+
+.flow .step.wait { background: var(--gold); color: var(--ink); }
+.flow .connector { color: var(--muted); font-size: 1.1rem; }
+
+/* ─── LISTS ───────────────────────────────────────── */
+ul, ol { margin: 0.5rem 0 1.2rem 1.5rem; }
+li { margin-bottom: 0.3rem; }
+
+/* ─── EXCEPTION HIERARCHY ─────────────────────────── */
+.tree {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.8;
+  margin: 1rem 0;
+  padding-left: 1rem;
+}
+
+.tree .node {
+  padding: 0.1rem 0.5rem;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.tree .base { background: #ddd; font-weight: 600; }
+.tree .err { background: #fde; }
+.tree .indent { padding-left: 1.5em; }
+
+/* ─── RESPONSIVE ──────────────────────────────────── */
+@media (max-width: 1000px) {
+  nav.sidebar { display: none; }
+  main { margin-left: 0; padding: 2rem 1.5rem 4rem; }
+}
+
+/* ─── SCROLL SPY ACTIVE ──────────────────────────── */
+section[id] { scroll-margin-top: 1rem; }
+
+/* ─── PRINT ──────────────────────────────────────── */
+@media print {
+  nav.sidebar { display: none; }
+  main { margin-left: 0; max-width: 100%; }
+  pre { white-space: pre-wrap; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ SIDEBAR ═══════════════ -->
+<nav class="sidebar">
+  <div class="logo">
+    <h1>GenAI Studio</h1>
+    <span>Python SDK v1.2.0</span>
+  </div>
+
+  <div class="nav-section">Getting Started</div>
+  <a href="#overview">Overview</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#installation">Installation</a>
+  <a href="#quickstart">Quick Start</a>
+
+  <div class="nav-section">Core Features</div>
+  <a href="#models">Model Management</a>
+  <a href="#model-catalog">Model Catalog</a>
+  <a href="#chat">Chat Completions</a>
+  <a href="#streaming">Streaming</a>
+  <a href="#conversations">Conversations</a>
+  <a href="#embeddings">Embeddings</a>
+
+  <div class="nav-section">RAG Pipeline</div>
+  <a href="#rag-overview">RAG Overview</a>
+  <a href="#rag-files">File Management</a>
+  <a href="#rag-kb">Knowledge Bases</a>
+  <a href="#rag-query">Grounded Queries</a>
+  <a href="#rag-workflow">Full Workflow</a>
+
+  <div class="nav-section">Reference</div>
+  <a href="#cli">CLI Reference</a>
+  <a href="#exceptions">Error Handling</a>
+  <a href="#api-ref">Method Reference</a>
+  <a href="#troubleshooting">Troubleshooting</a>
+</nav>
+
+<!-- ═══════════════ MAIN CONTENT ═══════════════ -->
+<main>
+
+<!-- ─── HERO ─── -->
+<header class="hero">
+  <h1>GenAI Studio <em>SDK</em></h1>
+  <p class="subtitle">
+    A Python wrapper for Purdue's GenAI Studio API — chat completions, embeddings, RAG pipelines, and more. Built for Open WebUI + LiteLLM + Ollama.
+  </p>
+  <div class="meta">
+    <span class="badge">v1.2.0</span>
+    <span>Author: Timothy Reese</span>
+    <span>January 2026</span>
+    <span>Python 3.10+</span>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- OVERVIEW -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="overview">
+  <h2>Overview</h2>
+  <p>
+    <code>genai_studio.py</code> is a single-file Python module that provides both a <strong>library API</strong> and a <strong>command-line interface</strong> for interacting with Purdue's GenAI Studio instance. It wraps the OpenAI Python SDK and adds handling for the quirks specific to GenAI Studio's deployment stack.
+  </p>
+  <p>
+    The module gives you chat completions, streaming, multi-turn conversations, text embeddings with similarity computation, and — as of v1.2 — a complete <strong>RAG (Retrieval-Augmented Generation)</strong> pipeline: upload documents, create knowledge bases, and ground model responses in your files.
+  </p>
+
+  <h3>What Problems Does It Solve?</h3>
+  <p>GenAI Studio's API has several non-standard behaviors that this wrapper handles transparently:</p>
+  <ul>
+    <li><strong>Model listing</strong> uses <code>/api/models</code> instead of the standard <code>/v1/models</code> (which returns HTML)</li>
+    <li><strong>Embeddings</strong> fail with 400 errors because LiteLLM injects <code>user</code> and <code>encoding_format</code> parameters that Ollama doesn't support — the wrapper suppresses these</li>
+    <li><strong>RAG endpoints</strong> aren't part of the OpenAI spec — the wrapper uses <code>httpx</code> directly for knowledge base management while routing chat through the OpenAI SDK with <code>extra_body</code></li>
+  </ul>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- ARCHITECTURE -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="architecture">
+  <h2>Architecture</h2>
+  <p>Understanding the server stack helps explain <em>why</em> certain workarounds exist in the code.</p>
+
+  <div class="arch-diagram">
+    <div class="layer client">
+      <div class="layer-label">Your Code — genai_studio.py</div>
+      Uses OpenAI SDK for chat/embeddings, httpx for model listing + RAG endpoints<br>
+      Suppresses unsupported params • Caches model list • Manages conversations
+    </div>
+    <div class="arrow">▼ HTTPS (Bearer token auth)</div>
+    <div class="layer proxy">
+      <div class="layer-label">Open WebUI + LiteLLM (API Router)</div>
+      https://genai.rcac.purdue.edu<br>
+      Routes requests • Injects <code>user</code> email from API key • Hosts RAG/file endpoints
+    </div>
+    <div class="arrow">▼ Internal routing</div>
+    <div class="layer backend">
+      <div class="layer-label">Ollama (Model Backend)</div>
+      Runs LLM models (Gemma, Llama, Mistral, DeepSeek, etc.)<br>
+      Does NOT support <code>user</code> or <code>encoding_format</code> params
+    </div>
+    <div class="arrow">▼ Vector store</div>
+    <div class="layer rag">
+      <div class="layer-label">ChromaDB / RAG Engine</div>
+      Stores file embeddings • Handles document chunking • Provides retrieval for grounded chat
+    </div>
+  </div>
+
+  <h3>How the SDK Routes Requests</h3>
+  <table>
+    <tr><th>Operation</th><th>SDK Path</th><th>Client</th><th>Why</th></tr>
+    <tr>
+      <td>List models</td>
+      <td><code>/api/models</code></td>
+      <td><code>httpx</code> direct</td>
+      <td>Non-standard response format; OpenAI SDK can't parse it</td>
+    </tr>
+    <tr>
+      <td>Chat completions</td>
+      <td><code>/api/chat/completions</code></td>
+      <td>OpenAI SDK</td>
+      <td>Standard OpenAI-compatible endpoint</td>
+    </tr>
+    <tr>
+      <td>Embeddings</td>
+      <td><code>/api/embeddings</code></td>
+      <td>OpenAI SDK + <code>extra_body</code></td>
+      <td>Needs param suppression workaround</td>
+    </tr>
+    <tr>
+      <td>File upload/list/delete</td>
+      <td><code>/api/v1/files/</code></td>
+      <td><code>httpx</code> direct</td>
+      <td>Open WebUI proprietary endpoint, not in OpenAI spec</td>
+    </tr>
+    <tr>
+      <td>KB create/list/link</td>
+      <td><code>/api/v1/knowledge/</code></td>
+      <td><code>httpx</code> direct</td>
+      <td>Open WebUI proprietary endpoint</td>
+    </tr>
+    <tr>
+      <td>RAG-grounded chat</td>
+      <td><code>/api/chat/completions</code></td>
+      <td>OpenAI SDK + <code>extra_body</code></td>
+      <td>Standard chat endpoint with collection IDs injected</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- INSTALLATION -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="installation">
+  <h2>Installation</h2>
+  <h4>Dependencies</h4>
+  <pre><span class="label">bash</span>
+pip install openai httpx numpy</pre>
+
+  <p><code>numpy</code> is optional — it accelerates cosine similarity but the module falls back to pure Python if unavailable.</p>
+
+  <h4>API Key Setup</h4>
+  <p>Get your key from <strong>GenAI Studio → Settings → Account → API Keys</strong>, then set it as an environment variable:</p>
+  <pre><span class="label">bash</span>
+<span class="cm"># Linux / macOS</span>
+<span class="kw">export</span> GENAI_STUDIO_API_KEY=<span class="s">"sk-your-key-here"</span>
+
+<span class="cm"># Windows PowerShell</span>
+<span class="fn">$env</span>:GENAI_STUDIO_API_KEY = <span class="s">"sk-your-key-here"</span>
+
+<span class="cm"># Or add to ~/.bashrc for persistence</span>
+<span class="kw">echo</span> <span class="s">'export GENAI_STUDIO_API_KEY="sk-..."'</span> >> ~/.bashrc</pre>
+
+  <div class="callout warn">
+    <div class="callout-title">⚠ Never hardcode your key</div>
+    <p>Always use environment variables. If you must pass it directly, don't commit it to version control.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- QUICK START -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="quickstart">
+  <h2>Quick Start</h2>
+
+  <pre><span class="label">Python</span>
+<span class="kw">from</span> genai_studio <span class="kw">import</span> GenAIStudio
+
+<span class="cm"># Initialize — reads GENAI_STUDIO_API_KEY from environment</span>
+ai = GenAIStudio()
+
+<span class="cm"># Pick a model</span>
+ai.select_model(<span class="s">"gemma3:12b"</span>)
+
+<span class="cm"># Chat — returns a plain string</span>
+response = ai.chat(<span class="s">"What is a p-value?"</span>)
+<span class="bi">print</span>(response)</pre>
+
+  <p>That's the minimal path. The <code>GenAIStudio</code> class is the single entry point for everything — chat, streaming, embeddings, RAG, health checks.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- MODELS -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="models">
+  <h2>Model Management</h2>
+  <p>Before chatting or embedding, you need to select a model. The SDK caches the model list after the first fetch.</p>
+
+  <pre><span class="label">Python</span>
+<span class="cm"># List all available models</span>
+<span class="bi">print</span>(ai.models)
+<span class="cm"># ['deepseek-r1:1.5b', 'gemma3:12b', 'llama3.2:latest', ...]</span>
+
+<span class="cm"># Filter by name</span>
+llama = [m <span class="kw">for</span> m <span class="kw">in</span> ai.models <span class="kw">if</span> <span class="s">'llama'</span> <span class="kw">in</span> m]
+
+<span class="cm"># Select a model (validates it exists)</span>
+ai.select_model(<span class="s">"gemma3:12b"</span>)
+
+<span class="cm"># Or skip validation for faster startup</span>
+ai = GenAIStudio(validate_model=<span class="kw">False</span>)
+ai.select_model(<span class="s">"gemma3:12b"</span>)  <span class="cm"># No API call</span>
+
+<span class="cm"># Force refresh if models were added/removed</span>
+ai.refresh_models()</pre>
+
+  <div class="callout info">
+    <div class="callout-title">ℹ How model listing works</div>
+    <p>The <code>.models</code> property uses <code>httpx</code> directly to call <code>/api/models</code> — not the OpenAI SDK — because Open WebUI returns a non-standard JSON format that the SDK's <code>models.list()</code> can't parse. Results are cached after the first call.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- MODEL CATALOG -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="model-catalog">
+  <h2>Available Models</h2>
+  <p>The following models are available on Purdue's GenAI Studio as of February 2026. Use the model ID string with <code>select_model()</code> or the <code>-m</code> CLI flag. Run <code>ai.models</code> or <code>python genai_studio.py models</code> for the live list.</p>
+
+  <table>
+    <tr><th>Family</th><th>Model ID</th><th>Size</th><th>Notes</th></tr>
+    <tr><td rowspan="2"><strong>CodeLlama</strong></td><td><code>codellama:latest</code></td><td>7B</td><td>Code-focused Llama variant</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td rowspan="6"><strong>DeepSeek R1</strong></td><td><code>deepseek-r1:1.5b</code></td><td>1.5B</td><td>Fastest, good for quick tests</td></tr>
+    <tr><td><code>deepseek-r1:7b</code></td><td>7B</td><td></td></tr>
+    <tr><td><code>deepseek-r1:14b</code></td><td>14B</td><td></td></tr>
+    <tr><td><code>deepseek-r1:32b</code></td><td>32B</td><td></td></tr>
+    <tr><td><code>deepseek-r1:70b</code></td><td>70B</td><td>Highest quality DeepSeek; slow cold start</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td><strong>Devstral</strong></td><td><code>devstral-small-2:latest</code></td><td>—</td><td>Mistral's coding model</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td rowspan="4"><strong>Gemma 3</strong></td><td><code>gemma3:1b</code></td><td>1B</td><td>Lightweight, fast</td></tr>
+    <tr><td><code>gemma3:12b</code></td><td>12B</td><td>Great balance of speed and quality</td></tr>
+    <tr><td><code>gemma3:27b</code></td><td>27B</td><td>Highest quality Gemma</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td rowspan="5"><strong>Llama 3.x / 4</strong></td><td><code>llama3.1:latest</code></td><td>8B</td><td></td></tr>
+    <tr><td><code>llama3.1:70b-instruct-q4_K_M</code></td><td>70B</td><td>Quantized; strong instruction following</td></tr>
+    <tr><td><code>llama3.2:latest</code></td><td>3B</td><td>Good for embeddings</td></tr>
+    <tr><td><code>llama3.3:70b</code></td><td>70B</td><td></td></tr>
+    <tr><td><code>llama4:latest</code></td><td>—</td><td>Latest Llama generation</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td><strong>LLaVA</strong></td><td><code>llava:latest</code></td><td>7B</td><td>Vision-language model</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td><strong>MedGemma</strong></td><td><code>medgemma:27b</code></td><td>27B</td><td>Medical domain; slow cold start</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td><strong>Mistral</strong></td><td><code>mistral:latest</code></td><td>7B</td><td>Fast, reliable, good all-rounder</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td><strong>Phi 4</strong></td><td><code>phi4:latest</code></td><td>14B</td><td>Microsoft; strong reasoning</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td><strong>Qwen 2.5</strong></td><td><code>qwen2.5:72b</code></td><td>72B</td><td>Large Alibaba model</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td rowspan="8"><strong>Qwen 3</strong></td><td><code>qwen3:1.7b</code></td><td>1.7B</td><td></td></tr>
+    <tr><td><code>qwen3:4b</code></td><td>4B</td><td></td></tr>
+    <tr><td><code>qwen3:8b</code></td><td>8B</td><td></td></tr>
+    <tr><td><code>qwen3:14b</code></td><td>14B</td><td></td></tr>
+    <tr><td><code>qwen3:30b</code></td><td>30B</td><td></td></tr>
+    <tr><td><code>qwen3:32b</code></td><td>32B</td><td></td></tr>
+    <tr><td><code>qwen3-coder:latest</code></td><td>—</td><td>Code-specialized Qwen 3</td></tr>
+    <tr><td><code>qwen3-vl:32b</code></td><td>32B</td><td>Vision-language Qwen 3</td></tr>
+    <tr><td colspan="3" style="border-bottom: 2px solid var(--border);"></td></tr>
+    <tr><td rowspan="2"><strong>QwQ</strong></td><td><code>qwq:latest</code></td><td>32B</td><td>Reasoning-focused</td></tr>
+    <tr><td><code>qwq:32b-fp16</code></td><td>32B</td><td>Full precision; higher quality, more VRAM</td></tr>
+  </table>
+
+  <div class="callout tip">
+    <div class="callout-title">💡 Which model should I pick?</div>
+    <p>For <strong>general chat</strong>, <code>gemma3:12b</code> or <code>mistral:latest</code> offer the best speed-to-quality ratio. For <strong>embeddings</strong>, <code>llama3.2:latest</code> works well. For <strong>complex reasoning</strong>, try <code>qwq:latest</code> or <code>deepseek-r1:32b</code>. The 70B+ models produce the best output but have slow cold starts — expect 30–60s on first request if the model isn't already loaded.</p>
+  </div>
+
+  <div class="callout info">
+    <div class="callout-title">ℹ Models change over time</div>
+    <p>This list reflects February 2026. Models are added and removed by RCAC admins. Always check the live list with <code>ai.models</code> or <code>python genai_studio.py models</code>.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- CHAT -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="chat">
+  <h2>Chat Completions</h2>
+  <p>The SDK provides multiple methods for different levels of detail:</p>
+
+  <table>
+    <tr><th>Method</th><th>Returns</th><th>Best For</th></tr>
+    <tr><td><code>chat()</code></td><td><code>str</code></td><td>Quick single-turn queries — just the text</td></tr>
+    <tr><td><code>chat_complete()</code></td><td><code>ChatResponse</code></td><td>When you need token counts, finish reason, model info</td></tr>
+    <tr><td><code>chat_stream()</code></td><td><code>Iterator[str]</code></td><td>Real-time token output for responsive UIs</td></tr>
+    <tr><td><code>chat_messages()</code></td><td><code>ChatResponse</code></td><td>Full control over message history</td></tr>
+    <tr><td><code>chat_conversation()</code></td><td><code>ChatResponse</code></td><td>Multi-turn with automatic history tracking</td></tr>
+  </table>
+
+  <h3>Simple Chat</h3>
+  <pre><span class="label">Python</span>
+<span class="cm"># Returns just the response text</span>
+answer = ai.chat(<span class="s">"Explain the Central Limit Theorem"</span>)
+
+<span class="cm"># With a system prompt to control behavior</span>
+answer = ai.chat(
+    <span class="s">"Explain regression"</span>,
+    system=<span class="s">"You are a statistics tutor. Use simple language. Be concise."</span>
+)
+
+<span class="cm"># With temperature and token limit</span>
+answer = ai.chat(
+    <span class="s">"Write a haiku about data"</span>,
+    temperature=<span class="n">0.9</span>,
+    max_tokens=<span class="n">50</span>
+)</pre>
+
+  <h3>Detailed Response</h3>
+  <pre><span class="label">Python</span>
+<span class="cm"># Returns a ChatResponse object with metadata</span>
+response = ai.chat_complete(<span class="s">"What is variance?"</span>)
+
+<span class="bi">print</span>(response.content)          <span class="cm"># The text</span>
+<span class="bi">print</span>(response.model)            <span class="cm"># Model that answered</span>
+<span class="bi">print</span>(response.total_tokens)     <span class="cm"># Token usage</span>
+<span class="bi">print</span>(response.finish_reason)    <span class="cm"># 'stop' or 'length'</span></pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- STREAMING -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="streaming">
+  <h2>Streaming</h2>
+  <p>Streaming shows tokens as they're generated — much better UX for long responses. The SDK yields string chunks from a generator.</p>
+
+  <pre><span class="label">Python</span>
+<span class="cm"># Tokens print as they arrive</span>
+<span class="kw">for</span> chunk <span class="kw">in</span> ai.chat_stream(<span class="s">"Tell me about Bayesian statistics"</span>):
+    <span class="bi">print</span>(chunk, end=<span class="s">""</span>, flush=<span class="kw">True</span>)
+<span class="bi">print</span>()  <span class="cm"># Final newline</span>
+
+<span class="cm"># Collect into a string if needed</span>
+full = <span class="s">""</span>.join(ai.chat_stream(<span class="s">"Explain ANOVA"</span>))</pre>
+
+  <div class="callout tip">
+    <div class="callout-title">💡 Streaming + RAG</div>
+    <p>You can stream RAG-grounded responses too — just add the <code>collections</code> parameter: <code>ai.chat_stream("question", collections=[kb.id])</code></p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- CONVERSATIONS -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="conversations">
+  <h2>Multi-Turn Conversations</h2>
+  <p>The <code>Conversation</code> class tracks message history automatically. When you call <code>chat_conversation()</code>, the assistant's response is appended to the history so the next message has full context.</p>
+
+  <pre><span class="label">Python</span>
+<span class="kw">from</span> genai_studio <span class="kw">import</span> GenAIStudio, Conversation
+
+ai = GenAIStudio()
+ai.select_model(<span class="s">"gemma3:12b"</span>)
+
+<span class="cm"># Create conversation with system prompt</span>
+conv = Conversation(system=<span class="s">"You are a statistics tutor. Be concise."</span>)
+
+<span class="cm"># Turn 1</span>
+conv.add_user(<span class="s">"What is correlation?"</span>)
+response = ai.chat_conversation(conv)
+<span class="bi">print</span>(response.content)
+<span class="cm"># conv now has 2 messages: user + assistant</span>
+
+<span class="cm"># Turn 2 — model sees the full history</span>
+conv.add_user(<span class="s">"How do I interpret the value?"</span>)
+response = ai.chat_conversation(conv)
+<span class="cm"># conv now has 4 messages</span>
+
+<span class="cm"># Check history</span>
+<span class="bi">print</span>(<span class="bi">len</span>(conv))  <span class="cm"># 4</span>
+
+<span class="cm"># Clear and start fresh (keeps system prompt)</span>
+conv.clear()</pre>
+
+  <h3>How It Works Internally</h3>
+  <p>When you call <code>chat_conversation(conv)</code>:</p>
+  <ol>
+    <li><code>conv.to_messages()</code> converts history to the OpenAI message format (list of dicts)</li>
+    <li>The system prompt is prepended to the message list</li>
+    <li>The full array is sent to <code>/api/chat/completions</code></li>
+    <li>If <code>auto_update=True</code> (default), the assistant response is appended to <code>conv.messages</code></li>
+  </ol>
+
+  <div class="callout warn">
+    <div class="callout-title">⚠ Streaming + Conversations</div>
+    <p>When streaming, <code>auto_update</code> can't work (the response isn't complete until the stream finishes). You must collect chunks yourself and call <code>conv.add_assistant(full_text)</code> manually.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- EMBEDDINGS -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="embeddings">
+  <h2>Embeddings &amp; Similarity</h2>
+  <p>Embeddings are vector representations of text — they capture semantic meaning so you can compute similarity, cluster documents, or build search indices.</p>
+
+  <pre><span class="label">Python</span>
+ai.select_model(<span class="s">"llama3.2:latest"</span>)
+
+<span class="cm"># Single text → single vector</span>
+emb = ai.embed(<span class="s">"statistical significance"</span>)
+<span class="bi">print</span>(<span class="bi">len</span>(emb))  <span class="cm"># 3072 dimensions</span>
+
+<span class="cm"># Batch → list of vectors (more efficient)</span>
+embs = ai.embed([<span class="s">"mean"</span>, <span class="s">"median"</span>, <span class="s">"mode"</span>])
+
+<span class="cm"># Convenience: semantic similarity in one call</span>
+sim = ai.similarity(<span class="s">"machine learning"</span>, <span class="s">"artificial intelligence"</span>)
+<span class="bi">print</span>(<span class="s">f"Similarity: </span>{sim:<span class="n">.4f</span>}<span class="s">"</span>)  <span class="cm"># ~0.85</span>
+
+<span class="cm"># Or compute manually</span>
+e1 = ai.embed(<span class="s">"happy"</span>)
+e2 = ai.embed(<span class="s">"joyful"</span>)
+<span class="bi">print</span>(GenAIStudio.cosine_similarity(e1, e2))</pre>
+
+  <div class="callout info">
+    <div class="callout-title">ℹ Embedding workaround</div>
+    <p>Internally, embeddings use <code>extra_body={"user": None, "encoding_format": None}</code> to suppress parameters that LiteLLM injects but Ollama can't handle. Without this, you get a <code>400 UnsupportedParamsError</code>. This is handled for you automatically.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- RAG OVERVIEW -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="rag-overview">
+  <h2>RAG Pipeline — Overview</h2>
+  <p>
+    RAG (Retrieval-Augmented Generation) lets you ground model responses in your own documents. Instead of relying solely on the model's training data, the server retrieves relevant chunks from your uploaded files and includes them in the context window.
+  </p>
+
+  <h3>How RAG Works on GenAI Studio</h3>
+  <div class="flow">
+    <div class="step">Upload File</div>
+    <div class="connector">→</div>
+    <div class="step">Create KB</div>
+    <div class="connector">→</div>
+    <div class="step">Link File to KB</div>
+    <div class="connector">→</div>
+    <div class="step wait">Wait for Indexing</div>
+    <div class="connector">→</div>
+    <div class="step">Query with collections=[kb.id]</div>
+  </div>
+
+  <p>Behind the scenes when you query with a collection ID:</p>
+  <ol>
+    <li>Your question is embedded into a vector</li>
+    <li>The vector store finds the most relevant document chunks</li>
+    <li>Those chunks are injected into the prompt as context</li>
+    <li>The model generates a response grounded in your documents</li>
+  </ol>
+
+  <div class="callout warn">
+    <div class="callout-title">⚠ Indexing takes time</div>
+    <p>After linking a file to a knowledge base, the server needs 5–30 seconds to chunk the document, generate embeddings, and store them. Querying too early returns generic (non-grounded) responses.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- RAG FILES -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="rag-files">
+  <h2>File Management</h2>
+  <p>Files are the raw documents you upload. They must be linked to a knowledge base before they can be used for RAG.</p>
+
+  <pre><span class="label">Python</span>
+<span class="cm"># Upload a file — returns a FileInfo object</span>
+info = ai.upload_file(<span class="s">"lecture_notes.pdf"</span>)
+<span class="bi">print</span>(info.id)        <span class="cm"># UUID: "029a1ad8-95eb-..."</span>
+<span class="bi">print</span>(info.filename)  <span class="cm"># "lecture_notes.pdf"</span>
+
+<span class="cm"># List all uploaded files</span>
+<span class="kw">for</span> f <span class="kw">in</span> ai.list_files():
+    <span class="bi">print</span>(<span class="s">f"</span>{f.id}  {f.filename}<span class="s">"</span>)
+
+<span class="cm"># Delete a file (by ID)</span>
+ai.delete_file(info.id)</pre>
+
+  <p>Supported file formats depend on the server configuration, but typically include: PDF, TXT, CSV, DOCX, MD, JSON, and Python files.</p>
+
+  <h3>The FileInfo Dataclass</h3>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>id</code></td><td><code>str</code></td><td>Server-assigned UUID — use this for linking and deleting</td></tr>
+    <tr><td><code>filename</code></td><td><code>str</code></td><td>Original filename as uploaded</td></tr>
+    <tr><td><code>meta</code></td><td><code>dict</code></td><td>Server metadata (size, content type, timestamps)</td></tr>
+    <tr><td><code>raw_response</code></td><td><code>dict</code></td><td>Full unprocessed API response</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- RAG KB -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="rag-kb">
+  <h2>Knowledge Bases</h2>
+  <p>A knowledge base (collection) is a named container that holds indexed files. You pass the KB's ID to chat methods to enable document-grounded responses.</p>
+
+  <pre><span class="label">Python</span>
+<span class="cm"># Create a knowledge base</span>
+kb = ai.create_knowledge_base(<span class="s">"STAT 350 Notes"</span>, <span class="s">"Course lecture PDFs"</span>)
+<span class="bi">print</span>(kb.id)    <span class="cm"># UUID</span>
+<span class="bi">print</span>(kb.name)  <span class="cm"># "STAT 350 Notes"</span>
+
+<span class="cm"># Link an uploaded file</span>
+ai.add_file_to_knowledge_base(kb.id, file_info.id)
+
+<span class="cm"># Unlink a file (doesn't delete the file)</span>
+ai.remove_file_from_knowledge_base(kb.id, file_info.id)
+
+<span class="cm"># List all knowledge bases</span>
+<span class="kw">for</span> kb <span class="kw">in</span> ai.list_knowledge_bases():
+    <span class="bi">print</span>(<span class="s">f"</span>{kb.id}  {kb.name}<span class="s">"</span>)
+
+<span class="cm"># Get details for a specific KB</span>
+kb = ai.get_knowledge_base(<span class="s">"207ff2b1-330c-..."</span>)
+
+<span class="cm"># Delete a KB (files remain uploaded)</span>
+ai.delete_knowledge_base(kb.id)</pre>
+
+  <h3>The KnowledgeBase Dataclass</h3>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>id</code></td><td><code>str</code></td><td>Collection UUID — pass to <code>collections</code> parameter</td></tr>
+    <tr><td><code>name</code></td><td><code>str</code></td><td>Human-readable name</td></tr>
+    <tr><td><code>description</code></td><td><code>str</code></td><td>Optional description</td></tr>
+    <tr><td><code>raw_response</code></td><td><code>dict</code></td><td>Full unprocessed API response</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- RAG QUERY -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="rag-query">
+  <h2>Grounded Queries</h2>
+  <p>Once files are linked and indexed, add <code>collections=[kb.id]</code> to any chat method. Under the hood, this injects <code>extra_body={"files": [{"type": "collection", "id": kb_id}]}</code> into the OpenAI API call — the same format Open WebUI's frontend uses.</p>
+
+  <pre><span class="label">Python</span>
+<span class="cm"># Simple grounded chat</span>
+answer = ai.chat(
+    <span class="s">"What does chapter 3 say about hypothesis testing?"</span>,
+    collections=[kb.id]
+)
+
+<span class="cm"># With system prompt</span>
+answer = ai.chat(
+    <span class="s">"Summarize the key formulas"</span>,
+    system=<span class="s">"Be concise. Use LaTeX notation."</span>,
+    collections=[kb.id]
+)
+
+<span class="cm"># Streaming</span>
+<span class="kw">for</span> chunk <span class="kw">in</span> ai.chat_stream(<span class="s">"Explain the examples"</span>, collections=[kb.id]):
+    <span class="bi">print</span>(chunk, end=<span class="s">""</span>, flush=<span class="kw">True</span>)
+
+<span class="cm"># Multi-turn with RAG context</span>
+conv = Conversation(system=<span class="s">"Answer based on the provided documents."</span>)
+conv.add_user(<span class="s">"What is the main topic of the notes?"</span>)
+response = ai.chat_conversation(conv, collections=[kb.id])
+
+conv.add_user(<span class="s">"Go deeper on that topic"</span>)
+response = ai.chat_conversation(conv, collections=[kb.id])
+
+<span class="cm"># Multiple knowledge bases</span>
+answer = ai.chat(<span class="s">"Compare approaches"</span>, collections=[kb1.id, kb2.id])</pre>
+
+  <h3>Which Methods Support <code>collections</code>?</h3>
+  <p>All five chat methods accept the parameter:</p>
+  <table>
+    <tr><th>Method</th><th>Signature</th></tr>
+    <tr><td><code>chat()</code></td><td><code>chat(prompt, ..., collections=[kb_id])</code></td></tr>
+    <tr><td><code>chat_complete()</code></td><td><code>chat_complete(prompt, ..., collections=[kb_id])</code></td></tr>
+    <tr><td><code>chat_stream()</code></td><td><code>chat_stream(prompt, ..., collections=[kb_id])</code></td></tr>
+    <tr><td><code>chat_messages()</code></td><td><code>chat_messages(msgs, ..., collections=[kb_id])</code></td></tr>
+    <tr><td><code>chat_conversation()</code></td><td><code>chat_conversation(conv, ..., collections=[kb_id])</code></td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- RAG WORKFLOW -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="rag-workflow">
+  <h2>Complete RAG Workflow</h2>
+  <p>Here's the full lifecycle — upload, index, query, cleanup — with explanatory comments:</p>
+
+  <pre><span class="label">Python — Full RAG Example</span>
+<span class="kw">import</span> time
+<span class="kw">from</span> genai_studio <span class="kw">import</span> GenAIStudio
+
+ai = GenAIStudio()
+ai.select_model(<span class="s">"gemma3:12b"</span>)
+
+<span class="cm"># ── Step 1: Upload your document ────────────────────</span>
+file_info = ai.upload_file(<span class="s">"course_notes.pdf"</span>)
+<span class="bi">print</span>(<span class="s">f"Uploaded: </span>{file_info.id}<span class="s">"</span>)
+
+<span class="cm"># ── Step 2: Create a knowledge base ─────────────────</span>
+kb = ai.create_knowledge_base(
+    <span class="s">"STAT 350 Course Notes"</span>,
+    <span class="s">"All lecture PDFs for Fall 2025"</span>
+)
+<span class="bi">print</span>(<span class="s">f"KB created: </span>{kb.id}<span class="s">"</span>)
+
+<span class="cm"># ── Step 3: Link file to KB ─────────────────────────</span>
+ai.add_file_to_knowledge_base(kb.id, file_info.id)
+
+<span class="cm"># ── Step 4: Wait for indexing ───────────────────────</span>
+<span class="cm"># The server chunks the doc and generates embeddings.</span>
+<span class="cm"># 10s is usually enough for small-medium files.</span>
+<span class="bi">print</span>(<span class="s">"Waiting for indexing..."</span>)
+time.sleep(<span class="n">10</span>)
+
+<span class="cm"># ── Step 5: Query with RAG context ──────────────────</span>
+response = ai.chat(
+    <span class="s">"What are the key formulas from chapter 5?"</span>,
+    collections=[kb.id]
+)
+<span class="bi">print</span>(response)
+
+<span class="cm"># ── Step 6: Cleanup (optional) ──────────────────────</span>
+<span class="cm"># Deleting the KB removes the index; the file stays.</span>
+ai.delete_knowledge_base(kb.id)
+<span class="cm"># ai.delete_file(file_info.id)  # Also delete the file</span></pre>
+
+  <div class="callout tip">
+    <div class="callout-title">💡 Testing RAG works</div>
+    <p>The SDK includes a built-in lifecycle test that uploads a file with a known secret, queries for it, and verifies retrieval. Run it from the CLI: <code>python genai_studio.py rag test -m mistral:latest</code></p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- CLI -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="cli">
+  <h2>CLI Reference</h2>
+  <p>Every feature is accessible from the command line. The module runs as a script.</p>
+
+  <h3>Global Options</h3>
+  <pre><span class="label">bash</span>
+python genai_studio.py [--timeout SEC] [--quiet] [--no-validate] &lt;command&gt;</pre>
+
+  <h3>Models</h3>
+  <pre><span class="label">bash</span>
+python genai_studio.py models                    <span class="cm"># List all</span>
+python genai_studio.py models --filter llama      <span class="cm"># Filter</span>
+python genai_studio.py models --count             <span class="cm"># Just count</span>
+python genai_studio.py models --json              <span class="cm"># JSON output</span></pre>
+
+  <h3>Chat</h3>
+  <pre><span class="label">bash</span>
+<span class="cm"># Single query</span>
+python genai_studio.py chat -m gemma3:12b <span class="s">"What is AI?"</span>
+
+<span class="cm"># Interactive session</span>
+python genai_studio.py chat -m gemma3:12b -i
+
+<span class="cm"># Interactive with streaming</span>
+python genai_studio.py chat -m gemma3:12b -i --stream
+
+<span class="cm"># With system prompt</span>
+python genai_studio.py chat -m gemma3:12b -s <span class="s">"Be concise"</span> <span class="s">"Explain ANOVA"</span>
+
+<span class="cm"># With RAG context</span>
+python genai_studio.py chat -m gemma3:12b -k &lt;kb_id&gt; <span class="s">"question?"</span></pre>
+
+  <h3>Embeddings</h3>
+  <pre><span class="label">bash</span>
+<span class="cm"># Preview embeddings</span>
+python genai_studio.py embed -m llama3.2:latest <span class="s">"hello"</span> <span class="s">"world"</span>
+
+<span class="cm"># Pairwise similarity</span>
+python genai_studio.py embed -m llama3.2:latest <span class="s">"cat"</span> <span class="s">"dog"</span> <span class="s">"car"</span> --similarity
+
+<span class="cm"># Full JSON output</span>
+python genai_studio.py embed -m llama3.2:latest <span class="s">"hello"</span> --json</pre>
+
+  <h3>RAG Commands</h3>
+  <pre><span class="label">bash</span>
+<span class="cm"># Upload a file</span>
+python genai_studio.py rag upload notes.pdf
+
+<span class="cm"># Create a knowledge base</span>
+python genai_studio.py rag create-kb <span class="s">"My Notes"</span> -d <span class="s">"Course materials"</span>
+
+<span class="cm"># Link file to KB</span>
+python genai_studio.py rag link &lt;kb_id&gt; &lt;file_id&gt;
+
+<span class="cm"># Query with RAG</span>
+python genai_studio.py rag query -m gemma3:12b &lt;kb_id&gt; <span class="s">"What does it say?"</span>
+
+<span class="cm"># List resources</span>
+python genai_studio.py rag list-files
+python genai_studio.py rag list-kb
+
+<span class="cm"># Cleanup</span>
+python genai_studio.py rag delete-file &lt;file_id&gt;
+python genai_studio.py rag delete-kb &lt;kb_id&gt;
+
+<span class="cm"># Unlink without deleting</span>
+python genai_studio.py rag unlink &lt;kb_id&gt; &lt;file_id&gt;
+
+<span class="cm"># Run automated lifecycle test</span>
+python genai_studio.py rag test -m mistral:latest --wait 15</pre>
+
+  <h3>Health Check</h3>
+  <pre><span class="label">bash</span>
+python genai_studio.py health</pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- EXCEPTIONS -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="exceptions">
+  <h2>Error Handling</h2>
+  <p>All exceptions inherit from <code>GenAIStudioError</code>, so you can catch everything with one clause or be specific:</p>
+
+  <div class="tree">
+    <span class="node base">GenAIStudioError</span><br>
+    <span class="indent"><span class="node err">├── AuthenticationError</span> — API key missing or invalid</span><br>
+    <span class="indent"><span class="node err">├── ModelNotFoundError</span> — Model ID doesn't exist</span><br>
+    <span class="indent"><span class="node err">├── ConnectionError</span> — Can't reach the server</span><br>
+    <span class="indent"><span class="node err">├── TimeoutError</span> — Request took too long</span><br>
+    <span class="indent"><span class="node err">└── RAGError</span> — File upload / KB operation failed</span>
+  </div>
+
+  <pre><span class="label">Python</span>
+<span class="kw">from</span> genai_studio <span class="kw">import</span> GenAIStudio, GenAIStudioError, RAGError
+
+ai = GenAIStudio()
+
+<span class="cm"># Catch everything</span>
+<span class="kw">try</span>:
+    response = ai.chat(<span class="s">"Hello"</span>)
+<span class="kw">except</span> GenAIStudioError <span class="kw">as</span> e:
+    <span class="bi">print</span>(<span class="s">f"Something went wrong: </span>{e}<span class="s">"</span>)
+
+<span class="cm"># Catch specific RAG errors</span>
+<span class="kw">try</span>:
+    ai.upload_file(<span class="s">"missing.pdf"</span>)
+<span class="kw">except</span> <span class="bi">FileNotFoundError</span>:
+    <span class="bi">print</span>(<span class="s">"File doesn't exist locally"</span>)
+<span class="kw">except</span> RAGError <span class="kw">as</span> e:
+    <span class="bi">print</span>(<span class="s">f"Server rejected the upload: </span>{e}<span class="s">"</span>)</pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- API REFERENCE -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="api-ref">
+  <h2>Method Reference</h2>
+
+  <h3>Constructor</h3>
+  <table>
+    <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
+    <tr><td><code>api_key</code></td><td><code>str?</code></td><td>env var</td><td>API key (falls back to <code>GENAI_STUDIO_API_KEY</code>)</td></tr>
+    <tr><td><code>base_url</code></td><td><code>str</code></td><td>Purdue URL</td><td>GenAI Studio base URL</td></tr>
+    <tr><td><code>timeout</code></td><td><code>int</code></td><td><code>120</code></td><td>Total request timeout (seconds)</td></tr>
+    <tr><td><code>connect_timeout</code></td><td><code>int</code></td><td><code>30</code></td><td>TCP connection timeout (seconds)</td></tr>
+    <tr><td><code>validate_model</code></td><td><code>bool</code></td><td><code>True</code></td><td>Validate model exists on <code>select_model()</code></td></tr>
+  </table>
+
+  <h3>Model Methods</h3>
+  <table>
+    <tr><th>Method</th><th>Returns</th><th>Description</th></tr>
+    <tr><td><code>.models</code></td><td><code>list[str]</code></td><td>Available model IDs (cached property)</td></tr>
+    <tr><td><code>select_model(id)</code></td><td><code>self</code></td><td>Set active model (chainable)</td></tr>
+    <tr><td><code>refresh_models()</code></td><td><code>list[str]</code></td><td>Force-refresh model cache</td></tr>
+  </table>
+
+  <h3>Chat Methods</h3>
+  <table>
+    <tr><th>Method</th><th>Returns</th><th>Key Params</th></tr>
+    <tr><td><code>chat(prompt)</code></td><td><code>str</code></td><td><code>model, system, collections, temperature, max_tokens</code></td></tr>
+    <tr><td><code>chat_complete(prompt)</code></td><td><code>ChatResponse</code></td><td>Same as above</td></tr>
+    <tr><td><code>chat_stream(prompt)</code></td><td><code>Iterator[str]</code></td><td>Same as above</td></tr>
+    <tr><td><code>chat_messages(msgs)</code></td><td><code>ChatResponse</code></td><td><code>model, stream, collections</code></td></tr>
+    <tr><td><code>chat_conversation(conv)</code></td><td><code>ChatResponse</code></td><td><code>model, stream, auto_update, collections</code></td></tr>
+  </table>
+
+  <h3>Embedding Methods</h3>
+  <table>
+    <tr><th>Method</th><th>Returns</th><th>Description</th></tr>
+    <tr><td><code>embed(text)</code></td><td><code>list[float]</code></td><td>Quick embed — vector(s) only</td></tr>
+    <tr><td><code>embed_complete(text)</code></td><td><code>EmbeddingResponse</code></td><td>Full response with metadata</td></tr>
+    <tr><td><code>similarity(t1, t2)</code></td><td><code>float</code></td><td>Semantic similarity (cosine)</td></tr>
+    <tr><td><code>cosine_similarity(a, b)</code></td><td><code>float</code></td><td>Raw cosine sim (static method)</td></tr>
+  </table>
+
+  <h3>RAG Methods</h3>
+  <table>
+    <tr><th>Method</th><th>Returns</th><th>Description</th></tr>
+    <tr><td><code>upload_file(path)</code></td><td><code>FileInfo</code></td><td>Upload a document to the server</td></tr>
+    <tr><td><code>list_files()</code></td><td><code>list[FileInfo]</code></td><td>List all uploaded files</td></tr>
+    <tr><td><code>delete_file(id)</code></td><td><code>bool</code></td><td>Delete an uploaded file</td></tr>
+    <tr><td><code>create_knowledge_base(name)</code></td><td><code>KnowledgeBase</code></td><td>Create a new collection</td></tr>
+    <tr><td><code>list_knowledge_bases()</code></td><td><code>list[KnowledgeBase]</code></td><td>List all KBs</td></tr>
+    <tr><td><code>get_knowledge_base(id)</code></td><td><code>KnowledgeBase</code></td><td>Get KB details</td></tr>
+    <tr><td><code>delete_knowledge_base(id)</code></td><td><code>bool</code></td><td>Delete a KB (files remain)</td></tr>
+    <tr><td><code>add_file_to_knowledge_base(kb, file)</code></td><td><code>bool</code></td><td>Link file for indexing</td></tr>
+    <tr><td><code>remove_file_from_knowledge_base(kb, file)</code></td><td><code>bool</code></td><td>Unlink file from KB</td></tr>
+  </table>
+
+  <h3>Utility</h3>
+  <table>
+    <tr><th>Method</th><th>Returns</th><th>Description</th></tr>
+    <tr><td><code>health_check()</code></td><td><code>dict</code></td><td>Connection status and model count</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- TROUBLESHOOTING -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="troubleshooting">
+  <h2>Troubleshooting</h2>
+
+  <h3>AuthenticationError on import</h3>
+  <p>The <code>GENAI_STUDIO_API_KEY</code> environment variable isn't set. Verify with <code>echo $GENAI_STUDIO_API_KEY</code>. Remember that <code>export</code> in one terminal doesn't affect others.</p>
+
+  <h3>ConnectionError — can't reach server</h3>
+  <p>You likely need to be on the Purdue network or VPN. Try <code>curl https://genai.rcac.purdue.edu/api/models</code> in a browser or terminal to verify access.</p>
+
+  <h3>TimeoutError — request takes too long</h3>
+  <p>Large models take time to load on first use (cold start). Increase the timeout: <code>GenAIStudio(timeout=180)</code> or try a smaller model.</p>
+
+  <h3>400 error on embeddings</h3>
+  <p>If you're calling the OpenAI SDK directly (not through this wrapper), you'll hit this. The wrapper automatically suppresses incompatible parameters. Make sure you're using <code>ai.embed()</code>, not <code>client.embeddings.create()</code> directly.</p>
+
+  <h3>RAG query returns generic (non-grounded) response</h3>
+  <p>The most common cause: not waiting long enough after linking. Indexing takes 5–30s. Try increasing wait time. Verify the file was linked: <code>ai.get_knowledge_base(kb_id)</code> and check <code>raw_response</code> for file list.</p>
+
+  <h3>RAGError: 404 on delete</h3>
+  <p>The resource was already deleted. This is harmless — wrap deletes in try/except if cleaning up multiple resources.</p>
+
+  <div class="callout info">
+    <div class="callout-title">ℹ Running the test suite</div>
+    <p>The project includes <code>test_rag_integration.py</code> — a 22-test suite that exercises every RAG method end-to-end. Run it with <code>python test_rag_integration.py --model gemma3:12b --wait 15</code> to verify your setup.</p>
+  </div>
+</section>
+
+</main>
+
+<!-- ═══════════════ SCROLL SPY ═══════════════ -->
+<script>
+(function() {
+  const links = document.querySelectorAll('nav.sidebar a[href^="#"]');
+  const sections = [];
+  links.forEach(a => {
+    const sec = document.querySelector(a.getAttribute('href'));
+    if (sec) sections.push({ el: sec, link: a });
+  });
+
+  function update() {
+    let current = sections[0];
+    for (const s of sections) {
+      if (s.el.getBoundingClientRect().top <= 120) current = s;
+    }
+    links.forEach(a => a.classList.remove('active'));
+    if (current) current.link.classList.add('active');
+  }
+
+  window.addEventListener('scroll', update, { passive: true });
+  update();
+})();
+</script>
+
+</body>
+</html>
