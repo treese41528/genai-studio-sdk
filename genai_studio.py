@@ -145,7 +145,7 @@ QUICK START - CLI USAGE
     # Chat with RAG context (alternative to rag query)
     python genai_studio.py chat -m gemma3:12b -k <kb_id> "question?"
 
-Version: 1.2.0
+Version: 1.2.1
 
 ================================================================================
 MODULE INFORMATION
@@ -153,7 +153,7 @@ MODULE INFORMATION
 
 Author: Timothy Reese
 Date: January 2026
-Version: 1.2.0
+Version: 1.2.1
 """
 
 from __future__ import annotations
@@ -182,7 +182,7 @@ from openai import OpenAI
 #
 # ════════════════════════════════════════════════════════════════════════════
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 # Base URL for Purdue's GenAI Studio instance
 # This runs Open WebUI with LiteLLM backend
@@ -1996,6 +1996,29 @@ class GenAIStudio:
         response = self.chat_complete(prompt, model=model, system=system, **kwargs)
         return response.content
     
+    def _chat_create(self, model, messages, _max_attempts=3, **kwargs):
+        """Call chat.completions.create, retrying when the backend returns an
+        empty/None completion (an occasional LiteLLM/Ollama hiccup under load).
+
+        Returns a response guaranteed to have at least one choice, or raises a
+        clear ConnectionError instead of letting an opaque AttributeError
+        ('NoneType' object has no attribute 'choices') surface downstream.
+        Callback handling stays with the caller.
+        """
+        for attempt in range(_max_attempts):
+            response = self.client.chat.completions.create(
+                model=model, messages=messages, **kwargs
+            )
+            if response is not None and getattr(response, "choices", None):
+                return response
+            if attempt < _max_attempts - 1:
+                time.sleep(0.5 * (attempt + 1))  # brief backoff, then retry
+        raise ConnectionError(
+            f"GenAI Studio returned an empty completion after {_max_attempts} "
+            f"attempts (model: {model}). The backend occasionally drops a "
+            "response under load; please retry."
+        )
+
     def chat_complete(
         self,
         prompt: str,
@@ -2081,11 +2104,7 @@ class GenAIStudio:
         
         # ── API Call ────────────────────────────────────────────────────
         try:
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                **kwargs  # Pass through temperature, max_tokens, etc.
-            )
+            response = self._chat_create(model, messages, **kwargs)
         finally:
             # Always call end callback, even on error
             if self.on_request_end:
@@ -2295,11 +2314,7 @@ class GenAIStudio:
             self.on_request_start("chat_messages")
         
         try:
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=msg_list,
-                **kwargs
-            )
+            response = self._chat_create(model, msg_list, **kwargs)
         finally:
             if self.on_request_end:
                 self.on_request_end("chat_messages")
