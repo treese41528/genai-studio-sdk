@@ -60,6 +60,7 @@ from .agent import (
     Cancel,
     Step,
 )
+from .orchestrate import DELEGATION_GUIDE, pipeline, supervisor
 from .verify import VERIFY_PROMPT, verifier
 from .events import (
     Final,
@@ -92,7 +93,8 @@ __all__ = [
     "Usage", "GenAIStudioClient", "ReActClient", "RetryPolicy",
     # agent
     "Agent", "AgentResult", "Step", "Budget", "Cancel",
-    # multi-agent: grounded verifier
+    # multi-agent: orchestration topologies + grounded verifier
+    "supervisor", "pipeline", "DELEGATION_GUIDE",
     "verifier", "VERIFY_PROMPT",
     # streaming events
     "TextDelta", "ToolCallStarted", "ToolCallFinished", "StepFinished", "Final",
