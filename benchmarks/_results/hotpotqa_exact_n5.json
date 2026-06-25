@@ -1,0 +1,10 @@
+{
+  "qwen2.5:72b|standard": {
+    "em": 0.2,
+    "fair_em": 0.2,
+    "correct": 1,
+    "valid": 5,
+    "infra": 0,
+    "n": 5
+  }
+}

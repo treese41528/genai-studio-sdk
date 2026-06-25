@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+run.jsonl
+eval_run_*.jsonl
+
+# Regenerable benchmark run artifacts + local probe logs (keep results JSON)
+benchmarks/_traces/
+benchmarks/_results/*.log
+benchmarks/_results/logprobs_probe*
+benchmarks/_results/partial/

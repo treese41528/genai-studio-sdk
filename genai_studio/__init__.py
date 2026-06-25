@@ -39,6 +39,16 @@ Key Workaround - Embeddings:
     We suppress these with: extra_body={"user": None, "encoding_format": None}
     Without this workaround, embeddings return a 400 error.
 
+Model Support - Embeddings (probed live 2026-06-17; see docs/embedding-models.md):
+    Only 15 of the gateway's 35 models expose a working /api/embeddings endpoint.
+    The rest return an error. Embedding dimension varies by model, so keep one
+    embed model consistent across indexing and query.
+    - Embed-capable (dim): llama3.2 (3072), llama3.1 (4096 / 70b 8192),
+      llama3.3:70b (8192), qwen2.5:72b (8192), phi4 (5120), mistral (4096),
+      codellama (4096), llava (4096), qwq (5120), deepseek-r1 (1536-5120 by size)
+    - NO embedding endpoint: gemma3 (ALL sizes - the default chat model), llama4,
+      qwen3 (all, incl. -coder/-vl), gpt-oss, devstral, medgemma
+
 ================================================================================
 INSTALLATION
 ================================================================================
@@ -95,8 +105,8 @@ QUICK START - LIBRARY USAGE
     # ── RAG (Knowledge Base) ────────────────────────────────────────────
     
     # Upload a file and create a knowledge base
-    file_info = ai.upload_file("lecture_notes.pdf")
-    kb = ai.create_knowledge_base("STAT 350 Notes")
+    file_info = ai.upload_file("report.pdf")
+    kb = ai.create_knowledge_base("Project Docs")
     ai.add_file_to_knowledge_base(kb.id, file_info.id)
     
     # Wait for indexing, then query with RAG context
@@ -366,7 +376,7 @@ class FileInfo:
         - Delete the file: ai.delete_file(file.id)
         
     filename : str
-        Original filename as uploaded (e.g., "lecture_notes.pdf").
+        Original filename as uploaded (e.g., "report.pdf").
         Preserved from the local file path during upload.
         
     meta : dict
@@ -385,11 +395,11 @@ class FileInfo:
     Example:
     -------
     >>> # Upload and inspect
-    >>> info = ai.upload_file("lecture_notes.pdf")
+    >>> info = ai.upload_file("report.pdf")
     >>> print(f"File ID: {info.id}")
     >>> print(f"Filename: {info.filename}")
     File ID: 029a1ad8-95eb-4964-b9fb-64cf980a6e02
-    Filename: lecture_notes.pdf
+    Filename: report.pdf
     
     >>> # Link to a knowledge base
     >>> ai.add_file_to_knowledge_base(kb.id, info.id)
@@ -413,7 +423,7 @@ class FileInfo:
         Example:
         -------
         >>> print(info)
-        FileInfo(id='029a1ad8-...', filename='lecture_notes.pdf')
+        FileInfo(id='029a1ad8-...', filename='report.pdf')
         """
         return f"FileInfo(id='{self.id}', filename='{self.filename}')"
 
@@ -441,8 +451,8 @@ class KnowledgeBase:
         - Delete: ai.delete_knowledge_base(kb.id)
         
     name : str
-        Human-readable name for the knowledge base (e.g., "STAT 350
-        Course Notes"). Set during creation; useful for display in
+        Human-readable name for the knowledge base (e.g., "Project
+        Docs"). Set during creation; useful for display in
         list_knowledge_bases() output.
         
     description : str
@@ -460,11 +470,11 @@ class KnowledgeBase:
     Example:
     -------
     >>> # Create and use
-    >>> kb = ai.create_knowledge_base("STAT 350 Materials", "All course PDFs")
+    >>> kb = ai.create_knowledge_base("Project Docs", "All reference PDFs")
     >>> print(f"Collection ID: {kb.id}")
     >>> print(f"Name: {kb.name}")
     Collection ID: 207ff2b1-330c-493b-9b05-01f18aa975a3
-    Name: STAT 350 Materials
+    Name: Project Docs
     
     >>> # Link files and query
     >>> ai.add_file_to_knowledge_base(kb.id, file_info.id)
@@ -490,7 +500,7 @@ class KnowledgeBase:
         Example:
         -------
         >>> print(kb)
-        KnowledgeBase(id='207ff2b1-...', name='STAT 350 Materials')
+        KnowledgeBase(id='207ff2b1-...', name='Project Docs')
         """
         return f"KnowledgeBase(id='{self.id}', name='{self.name}')"
 
@@ -1494,7 +1504,8 @@ class GenAIStudio:
         try:
             resp = self._http_get("/api/v1/files/")
             data = resp.json()
-            items = data if isinstance(data, list) else data.get("data", data.get("files", []))
+            items = data if isinstance(data, list) else data.get(
+                "items", data.get("data", data.get("files", [])))
             return [FileInfo(id=i["id"], filename=i.get("filename", i.get("name", "unknown")),
                             meta=i.get("meta", {}), raw_response=i) for i in items]
         except httpx.HTTPStatusError as e:
@@ -1528,7 +1539,8 @@ class GenAIStudio:
         try:
             resp = self._http_get("/api/v1/knowledge/")
             data = resp.json()
-            items = data if isinstance(data, list) else data.get("data", data.get("knowledge", []))
+            items = data if isinstance(data, list) else data.get(
+                "items", data.get("data", data.get("knowledge", [])))
             return [KnowledgeBase(id=i["id"], name=i.get("name", "untitled"),
                                   description=i.get("description", ""), raw_response=i) for i in items]
         except httpx.HTTPStatusError as e:
@@ -1973,7 +1985,7 @@ class GenAIStudio:
         >>> # With system prompt
         >>> response = ai.chat(
         ...     "Explain regression",
-        ...     system="You are a statistics professor. Use examples."
+        ...     system="You are a statistics expert. Use examples."
         ... )
         
         >>> # With parameters
@@ -2018,6 +2030,52 @@ class GenAIStudio:
             f"attempts (model: {model}). The backend occasionally drops a "
             "response under load; please retry."
         )
+
+    def chat_raw(
+        self,
+        messages: list[dict] | list[ChatMessage],
+        model: str | None = None,
+        **kwargs,
+    ):
+        """Return the RAW OpenAI chat-completion object (not a ChatResponse).
+
+        This is the supported low-level seam for advanced callers — notably the
+        agent framework in ``genai_studio.agents`` — that need fields
+        ``ChatResponse`` intentionally drops, above all
+        ``resp.choices[0].message.tool_calls`` (native tool-calling) and the
+        full ``raw`` payload. It accepts the same ``tools=`` / ``tool_choice=``
+        / sampling ``**kwargs`` as the OpenAI ``chat.completions.create`` call,
+        passes them straight through to the OpenAI-compatible endpoint, and
+        inherits the empty-completion retry from :meth:`_chat_create`.
+
+        Parameters
+        ----------
+        messages : list[dict] | list[ChatMessage]
+            Full conversation in OpenAI format (dicts) or ``ChatMessage`` objects.
+        model : str, optional
+            Model ID; falls back to the selected model.
+        **kwargs
+            Forwarded verbatim to the OpenAI client (e.g. ``tools``,
+            ``tool_choice``, ``temperature``, ``stream``).
+
+        Returns
+        -------
+        openai.types.chat.ChatCompletion
+            The untouched response object from the OpenAI client.
+
+        Example
+        -------
+        >>> resp = ai.chat_raw(
+        ...     [{"role": "user", "content": "Weather in Paris? Use the tool."}],
+        ...     tools=[weather_tool], tool_choice="auto",
+        ... )
+        >>> resp.choices[0].message.tool_calls
+        """
+        model = self._resolve_model(model)
+        msg_list = [
+            m.to_dict() if isinstance(m, ChatMessage) else m for m in messages
+        ]
+        return self._chat_create(model, msg_list, **kwargs)
 
     def chat_complete(
         self,

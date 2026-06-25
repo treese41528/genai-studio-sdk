@@ -36,24 +36,76 @@ import time; time.sleep(10)  # Wait for indexing
 response = ai.chat("Summarize chapter 1", collections=[kb.id])
 ```
 
+## Embeddings — model support
+
+Probed live (2026-06-17): of the 35 models the gateway lists, **only 15 expose a
+working embedding endpoint**. Embedding **dimension varies by model**, so keep one
+embed model consistent across indexing and query.
+
+⚠️ **`gemma3` (the gateway's default chat model) has no embedding endpoint.** For embeddings /
+RAG indexing, use an embed-capable model, e.g. `llama3.2:latest` (3072-d),
+`mistral:latest` (4096-d), or `qwen2.5:72b` (8192-d).
+
+Full list (with dimensions) and the no-embed models: **[docs/embedding-models.md](docs/embedding-models.md)**.
+
+## Agent Framework
+
+A lightweight, teachable agent loop lives in `genai_studio.agents` — four seams
+(`@tool`, `ModelClient`, `Agent`, `Tracer`) that build a tool-using agent in ~10
+lines and scale to async/streaming/citations for production.
+
+```python
+from genai_studio import GenAIStudio
+from genai_studio.agents import Agent, tool, GenAIStudioClient, ConsoleTracer
+
+@tool
+def add(a: int, b: int) -> str:
+    "Add two integers."
+    return str(a + b)
+
+client = GenAIStudioClient(GenAIStudio(), default_model="qwen2.5:72b")
+agent = Agent(client=client, tools=[add], tracer=ConsoleTracer())
+print(agent.run("What is 21 + 21?").text)
+```
+
+Highlights: native tool-calling **and** a `ReActClient` fallback (same `Agent`);
+`output_schema=` for validated pydantic results; `Budget`/`Cancel` guards; typed
+transient-error retry with backoff; `run`/`arun`/`stream`/`astream`; a terminal
+`final_answer`/`finish` tool; and `ConsoleTracer`/`JsonlTracer` for full
+step-by-step observability.
+
+Shipped tools:
+- **General** (core — `genai_studio.agents.tools`): `final_answer`/`finish`
+  (terminal), `calculator` (safe arithmetic), `web_search` + `wikipedia_search`
+  (httpx, results carried as `ToolResult.sources` citations).
+- **Data science** (`[datascience]` extra): `python_exec`, `load_dataset`,
+  `describe_data` (EDA), `fit_model`, `hypothesis_test` (scipy t-test / χ² /
+  correlation / ANOVA), `plot`, and the `data_analyst` agent.
+
+See `examples/01_…07_*.py`, `benchmarks/` (paper replications), and the
+[design doc](../genai-studio-agent-design.md).
+
+```bash
+pip install -e '.[datascience]'   # core + scientific stack for the DS agents
+```
+
 ## CLI
 
 ```bash
-python genai_studio.py models                              # List models
-python genai_studio.py chat -m gemma3:12b "What is AI?"    # Single query
-python genai_studio.py chat -m gemma3:12b -i --stream      # Interactive
-python genai_studio.py embed -m llama3.2:latest "a" "b" --similarity
-python genai_studio.py rag upload notes.pdf                # RAG workflow
-python genai_studio.py health                              # Connection check
+genai-studio models                                  # List models (console script)
+python -m genai_studio chat -m gemma3:12b "What is AI?"   # or: python -m genai_studio
+python -m genai_studio chat -m gemma3:12b -i --stream     # Interactive
+python -m genai_studio embed -m llama3.2:latest "a" "b" --similarity
+python -m genai_studio rag upload notes.pdf              # RAG workflow
+python -m genai_studio health                            # Connection check
 ```
 
 ## Tests
 
 ```bash
-python test_full_suite.py                    # Default: 3 chat models, 1 embed model
+pytest tests/                                # Agent-framework unit tests (no network)
+python test_full_suite.py --skip-rag         # Legacy live suite (needs an API key)
 python test_full_suite.py --all-models       # Every available model
-python test_full_suite.py --skip-rag         # Fast core-only run
-python test_full_suite.py -v                 # Verbose output
 ```
 
 ## Documentation

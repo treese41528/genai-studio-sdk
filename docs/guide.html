@@ -459,7 +459,7 @@ section[id] { scroll-margin-top: 1rem; }
   </p>
   <div class="meta">
     <span class="badge">v1.2.0</span>
-    <span>Author: Timothy Reese</span>
+    <span>GenAI Studio SDK</span>
     <span>January 2026</span>
     <span>Python 3.10+</span>
   </div>
@@ -897,9 +897,9 @@ e2 = ai.embed(<span class="s">"joyful"</span>)
 
   <pre><span class="label">Python</span>
 <span class="cm"># Upload a file — returns a FileInfo object</span>
-info = ai.upload_file(<span class="s">"lecture_notes.pdf"</span>)
+info = ai.upload_file(<span class="s">"report.pdf"</span>)
 <span class="bi">print</span>(info.id)        <span class="cm"># UUID: "029a1ad8-95eb-..."</span>
-<span class="bi">print</span>(info.filename)  <span class="cm"># "lecture_notes.pdf"</span>
+<span class="bi">print</span>(info.filename)  <span class="cm"># "report.pdf"</span>
 
 <span class="cm"># List all uploaded files</span>
 <span class="kw">for</span> f <span class="kw">in</span> ai.list_files():
@@ -929,9 +929,9 @@ ai.delete_file(info.id)</pre>
 
   <pre><span class="label">Python</span>
 <span class="cm"># Create a knowledge base</span>
-kb = ai.create_knowledge_base(<span class="s">"STAT 350 Notes"</span>, <span class="s">"Course lecture PDFs"</span>)
+kb = ai.create_knowledge_base(<span class="s">"Project Docs"</span>, <span class="s">"Reference PDFs"</span>)
 <span class="bi">print</span>(kb.id)    <span class="cm"># UUID</span>
-<span class="bi">print</span>(kb.name)  <span class="cm"># "STAT 350 Notes"</span>
+<span class="bi">print</span>(kb.name)  <span class="cm"># "Project Docs"</span>
 
 <span class="cm"># Link an uploaded file</span>
 ai.add_file_to_knowledge_base(kb.id, file_info.id)
@@ -1022,13 +1022,13 @@ ai = GenAIStudio()
 ai.select_model(<span class="s">"gemma3:12b"</span>)
 
 <span class="cm"># ── Step 1: Upload your document ────────────────────</span>
-file_info = ai.upload_file(<span class="s">"course_notes.pdf"</span>)
+file_info = ai.upload_file(<span class="s">"report.pdf"</span>)
 <span class="bi">print</span>(<span class="s">f"Uploaded: </span>{file_info.id}<span class="s">"</span>)
 
 <span class="cm"># ── Step 2: Create a knowledge base ─────────────────</span>
 kb = ai.create_knowledge_base(
-    <span class="s">"STAT 350 Course Notes"</span>,
-    <span class="s">"All lecture PDFs for Fall 2025"</span>
+    <span class="s">"Project Docs"</span>,
+    <span class="s">"All reference PDFs"</span>
 )
 <span class="bi">print</span>(<span class="s">f"KB created: </span>{kb.id}<span class="s">"</span>)
 
@@ -1111,7 +1111,7 @@ python genai_studio.py embed -m llama3.2:latest <span class="s">"hello"</span> -
 python genai_studio.py rag upload notes.pdf
 
 <span class="cm"># Create a knowledge base</span>
-python genai_studio.py rag create-kb <span class="s">"My Notes"</span> -d <span class="s">"Course materials"</span>
+python genai_studio.py rag create-kb <span class="s">"My Notes"</span> -d <span class="s">"Reference docs"</span>
 
 <span class="cm"># Link file to KB</span>
 python genai_studio.py rag link &lt;kb_id&gt; &lt;file_id&gt;
