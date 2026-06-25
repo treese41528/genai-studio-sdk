@@ -60,6 +60,16 @@ from .agent import (
     Cancel,
     Step,
 )
+from .guard import (
+    ALLOW,
+    BudgetGuard,
+    Decision,
+    Guard,
+    ToolFilterGuard,
+    deny,
+    guard,
+    modify,
+)
 from .orchestrate import DELEGATION_GUIDE, pipeline, supervisor
 from .verify import VERIFY_PROMPT, verifier
 from .events import (
@@ -93,6 +103,9 @@ __all__ = [
     "Usage", "GenAIStudioClient", "ReActClient", "RetryPolicy",
     # agent
     "Agent", "AgentResult", "Step", "Budget", "Cancel",
+    # guard seam (deterministic before/after-tool policy)
+    "Guard", "Decision", "ALLOW", "deny", "modify", "guard",
+    "BudgetGuard", "ToolFilterGuard",
     # multi-agent: orchestration topologies + grounded verifier
     "supervisor", "pipeline", "DELEGATION_GUIDE",
     "verifier", "VERIFY_PROMPT",

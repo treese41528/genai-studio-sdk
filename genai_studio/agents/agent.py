@@ -39,6 +39,7 @@ from .client import (
 )
 from .errors import BudgetExceeded, Cancelled, ToolError
 from .events import Final, StepFinished, TextDelta, ToolCallFinished, ToolCallStarted
+from .guard import Decision
 from .tool import Tool, ToolRegistry, ToolResult, ToolSpec, _json_schema
 from .trace import (
     AgentEnd,
@@ -182,6 +183,7 @@ class Agent:
     force_final_answer: bool = True  # on max_steps, make one tool-less call for a text answer
     finish_tool_names: tuple = ("final_answer", "finish")  # calls that end the loop
     name: str | None = None  # default tool name when exposed via as_tool()
+    guards: Sequence = ()  # before/after-tool hooks (deterministic policy seam)
 
     def __post_init__(self):
         self._registry = ToolRegistry(self.tools)
@@ -351,12 +353,64 @@ class Agent:
         raise RuntimeError(f"Unknown intent: {intent!r}")  # pragma: no cover
 
     def _exec_sync(self, call) -> ToolResult:
+        call, blocked = self._before_tool(call)
+        if blocked is not None:
+            return blocked
         t = self._registry.get(call.name)
         if t is not None and t.is_async:
-            return ToolResult(content="", error=(
-                f"Async tool {call.name!r} cannot run in Agent.run(); use arun()."
-            ))
-        return self._registry.execute(call)
+            result = ToolResult(content="", error=(
+                f"Async tool {call.name!r} cannot run in Agent.run(); use arun()."))
+        else:
+            result = self._registry.execute(call)
+        return self._after_tool(call, result)
+
+    # ── guard seam: deterministic before/after-tool hooks ────────────────────
+    def _before_tool(self, call):
+        """Run before-tool guards. Returns (possibly-modified call, blocked-result|None).
+
+        Fails CLOSED on anything unexpected — a guard that raises, returns a
+        non-``Decision``, or names an unknown action BLOCKS the call (it can never
+        silently allow a call it meant to stop) and never crashes the run.
+        ``modify`` rewrites only what the tool RUNS with — the recorded transcript
+        still reflects the model's original request (and ``raw_arguments`` is cleared
+        so the new args win if the call is ever re-serialised).
+        """
+        for g in self.guards:
+            try:
+                d = g.before_tool(call)
+            except Exception as exc:
+                return call, ToolResult(
+                    content="", error=f"blocked: guard error: {type(exc).__name__}: {exc}")
+            if d is None:
+                continue
+            if not isinstance(d, Decision):
+                return call, ToolResult(content="", error=(
+                    f"blocked: guard returned {type(d).__name__}, expected None or a "
+                    "Decision (ALLOW / deny() / modify())."))
+            if d.action == "allow":
+                continue
+            if d.action == "deny":
+                return call, ToolResult(content="", error=d.reason or "blocked by a guard")
+            if d.action == "modify" and d.arguments is not None:
+                call = replace(call, arguments=dict(d.arguments), raw_arguments=None)
+                continue
+            return call, ToolResult(content="", error=(
+                f"blocked: guard returned an invalid decision (action={d.action!r})."))
+        return call, None
+
+    def _after_tool(self, call, result):
+        """Run after-tool guards; a guard may replace the result with a (new)
+        ``ToolResult``. A raising guard OR a non-``ToolResult`` return is ignored
+        (the original result stands) so a broken guard can't lose a real result or
+        crash the run."""
+        for g in self.guards:
+            try:
+                new = g.after_tool(call, result)
+            except Exception:
+                continue
+            if isinstance(new, ToolResult):
+                result = new
+        return result
 
     # ── public async entry point (mirrors run via the same _drive) ───────────
     async def arun(self, prompt, *, memory=None, budget=None, cancel=None) -> AgentResult:
@@ -395,16 +449,22 @@ class Agent:
         raise RuntimeError(f"Unknown intent: {intent!r}")  # pragma: no cover
 
     async def _exec_async(self, call) -> ToolResult:
+        call, blocked = self._before_tool(call)
+        if blocked is not None:
+            return blocked
         t = self._registry.get(call.name)
         if t is None:
-            return self._registry._unknown(call.name)
-        try:
-            if t.is_async:
-                return await t.arun(call.arguments)
-            # Run a sync tool off the event loop so it can't block streaming.
-            return await asyncio.to_thread(self._registry.execute, call)
-        except Exception as exc:  # pragma: no cover - registry already guards
-            return ToolResult(content="", error=f"{type(exc).__name__}: {exc}")
+            result = self._registry._unknown(call.name)
+        else:
+            try:
+                if t.is_async:
+                    result = await t.arun(call.arguments)
+                else:
+                    # Run a sync tool off the event loop so it can't block streaming.
+                    result = await asyncio.to_thread(self._registry.execute, call)
+            except Exception as exc:  # pragma: no cover - registry already guards
+                result = ToolResult(content="", error=f"{type(exc).__name__}: {exc}")
+        return self._after_tool(call, result)
 
     # ── streaming (sync + async) — same _drive, events emitted to the consumer ─
     def stream(self, prompt, *, memory=None, budget=None, cancel=None):
