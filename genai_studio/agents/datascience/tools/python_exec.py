@@ -17,11 +17,12 @@ step is available in the next. Execution output maps to a ``ToolResult``:
 - ``data``    : the raw last-expression value (a DataFrame/array/figure for UIs)
 - ``error``   : the full traceback on failure (fed back so the model self-corrects)
 
-Production hardening (drop-in behind the same ``code: str -> ToolResult`` signature):
-run the code in a subprocess that sets ``resource.setrlimit`` (RLIMIT_AS/CPU),
-enforces a wall-clock timeout + SIGKILL, drops to a restricted user inside a
-container/nsjail with no network and a scratch FS, and ships state by pickling
-the namespace in/out.
+Production hardening: use the implemented drop-in ``make_sandboxed_python_exec``
+(``tools/sandbox.py``) — same ``code: str -> ToolResult`` signature, but each call
+runs in a resource-limited subprocess (``RLIMIT_AS``/``RLIMIT_CPU`` + a wall-clock
+SIGKILL + a soft network block; picklable state shipped across calls). That bounds
+runaway memory/CPU/time and casual network use but is NOT an OS jail — for
+untrusted input at scale, run the whole agent inside a container/nsjail.
 """
 
 from __future__ import annotations
