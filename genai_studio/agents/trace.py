@@ -33,6 +33,8 @@ from typing import Any, Protocol, runtime_checkable
 class TraceEvent:
     t: float = field(default_factory=time.time)
     step: int | None = None
+    agent: str | None = None   # stamped by ScopedTracer for multi-agent attribution
+    depth: int = 0             # nesting depth in the agent tree (0 = top-level)
 
 
 @dataclass
@@ -154,24 +156,28 @@ class ConsoleTracer:
         self.c = _C(color)
         self.show_prompts = show_prompts
 
-    def _print(self, *parts: str) -> None:
-        self.stream.write(" ".join(parts) + "\n")
+    def _print(self, scope: str, *parts: str) -> None:
+        # ``scope`` is a per-event local (not instance state) so one shared
+        # ConsoleTracer stays correctly attributed even when sub-agents run on
+        # worker threads (as_tool's sync wrapper under arun → asyncio.to_thread).
+        self.stream.write(scope + " ".join(parts) + "\n")
         self.stream.flush()
 
     def on_event(self, event: TraceEvent) -> None:
         c = self.c
+        scope = self._scope_str(event)  # local, never shared mutable state
         if isinstance(event, AgentStart):
             names = ", ".join(getattr(t, "name", "?") for t in (event.tools or []))
-            self._print(c.bold("agent"), c.dim(f"model={event.model or '-'} tools=[{names}]"))
+            self._print(scope, c.bold("agent"), c.dim(f"model={event.model or '-'} tools=[{names}]"))
         elif isinstance(event, LLMCall):
-            self._print(c.cyan(f"▸ step {(_si(event.step))}"))
+            self._print(scope, c.cyan(f"▸ step {(_si(event.step))}"))
             if self.show_prompts:
                 for m in event.messages:
                     role = getattr(m, "role", "?")
                     content = getattr(m, "content", "") or ""
-                    self._print(c.dim(f"    [{role}] {_truncate(content, 200)}"))
+                    self._print(scope, c.dim(f"    [{role}] {_truncate(content, 200)}"))
         elif isinstance(event, LLMRetry):
-            self._print(c.yellow(
+            self._print(scope, c.yellow(
                 f"  ↻ provider busy ({event.status or '?'}), retrying in {event.delay:.1f}s"
             ))
         elif isinstance(event, LLMResponse):
@@ -179,23 +185,31 @@ class ConsoleTracer:
             calls = getattr(resp, "tool_calls", None) or []
             if calls:
                 for call in calls:
-                    self._print("    " + c.dim("llm →"),
+                    self._print(scope, "    " + c.dim("llm →"),
                                 f"calls {call.name}({_fmt_args(call.arguments)})")
             else:
                 usage = getattr(resp, "usage", None)
                 toks = getattr(usage, "total_tokens", None)
                 tail = f"({toks} tokens, $0.00 — Purdue)" if toks else ""
-                self._print("    " + c.dim("llm →"), c.green("final answer"), c.dim(tail))
+                self._print(scope, "    " + c.dim("llm →"), c.green("final answer"), c.dim(tail))
         elif isinstance(event, ToolResultEvent):
             res = event.result
             elapsed = f"({event.elapsed:.1f}s)" if event.elapsed is not None else ""
             if getattr(res, "error", None):
-                self._print("    " + c.dim("tool ←"), c.red(_truncate(res.error, 80)), c.dim(elapsed))
+                self._print(scope, "    " + c.dim("tool ←"), c.red(_truncate(res.error, 80)), c.dim(elapsed))
             else:
                 content = getattr(res, "content", "") or ""
-                self._print("    " + c.dim("tool ←"), _truncate(content, 80), c.dim(elapsed))
+                self._print(scope, "    " + c.dim("tool ←"), _truncate(content, 80), c.dim(elapsed))
         elif isinstance(event, AgentEnd):
-            self._print(c.dim(f"agent end ({event.stopped})"))
+            self._print(scope, c.dim(f"agent end ({event.stopped})"))
+
+    def _scope_str(self, event: TraceEvent) -> str:
+        """Per-event prefix: depth indent + a dim ``[agent]`` tag (empty if unscoped)."""
+        agent = getattr(event, "agent", None)
+        if not agent:
+            return ""
+        depth = getattr(event, "depth", 0) or 0
+        return "  " * depth + self.c.dim(f"[{agent}] ")
 
 
 def _si(step) -> str:
@@ -203,7 +217,12 @@ def _si(step) -> str:
 
 
 class JsonlTracer:
-    """Append one JSON object per event to a file. Eval-harness substrate."""
+    """Append one JSON object per event to a file. Eval-harness substrate.
+
+    Every row now carries ``agent``/``depth`` (defaulted ``null``/``0`` when no
+    ``ScopedTracer`` is in play). Readers of older trace files should treat the
+    keys as optional — ``row.get("agent")`` / ``row.get("depth", 0)``.
+    """
 
     def __init__(self, path, *, mode: str = "a"):
         self.path = path
@@ -222,6 +241,42 @@ class JsonlTracer:
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+
+class ScopedTracer:
+    """Wrap an inner tracer and stamp every event with an agent name + nesting depth,
+    so a multi-agent run is attributable instead of a flat collision of step numbers.
+
+    Give each agent its OWN ScopedTracer over ONE shared inner tracer::
+
+        inner = ConsoleTracer()
+        manager = Agent(tracer=ScopedTracer(inner, "manager"), ...)
+        worker  = Agent(tracer=ScopedTracer(inner, "researcher", depth=1), ...)
+
+    Now the shared inner sees every event carrying its ``agent``/``depth``: a
+    sub-agent's "step 1" no longer collides with the manager's — ``ConsoleTracer``
+    indents + tags by agent, and ``JsonlTracer`` rows include ``agent``/``depth`` so
+    the whole agent tree is reconstructable (``AgentStart``/``AgentEnd`` already
+    bracket each sub-run). Stamping is idempotent (the first/innermost scope wins),
+    composes with any tracer, and never crashes a run.
+    """
+
+    def __init__(self, inner, agent: str, depth: int = 0):
+        self.inner = inner
+        self.agent = agent
+        self.depth = depth
+
+    def on_event(self, event: TraceEvent) -> None:
+        try:
+            if getattr(event, "agent", None) is None:
+                event.agent = self.agent
+                event.depth = self.depth
+        except Exception:  # pragma: no cover - defensive; never crash a run
+            pass
+        try:
+            self.inner.on_event(event)
+        except Exception:  # pragma: no cover
+            pass
 
 
 def _event_to_dict(event: TraceEvent) -> dict:

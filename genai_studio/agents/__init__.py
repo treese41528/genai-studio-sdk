@@ -88,6 +88,7 @@ from .trace import (
     LLMResponse,
     LLMRetry,
     NullTracer,
+    ScopedTracer,
     StepEnd,
     ToolCallEvent,
     ToolResultEvent,
@@ -114,7 +115,7 @@ __all__ = [
     # trace
     "Tracer", "TraceEvent", "AgentStart", "LLMCall", "LLMResponse", "LLMRetry",
     "ToolCallEvent", "ToolResultEvent", "StepEnd", "AgentEnd",
-    "ConsoleTracer", "NullTracer", "JsonlTracer",
+    "ConsoleTracer", "NullTracer", "JsonlTracer", "ScopedTracer",
     # errors
     "AgentError", "TransientError", "ToolError", "BudgetExceeded", "Cancelled",
 ]
