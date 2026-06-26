@@ -71,6 +71,7 @@ from .guard import (
     modify,
 )
 from .orchestrate import DELEGATION_GUIDE, pipeline, supervisor
+from .team import Team
 from .verify import VERIFY_PROMPT, verifier
 from .events import (
     Final,
@@ -108,7 +109,7 @@ __all__ = [
     "Guard", "Decision", "ALLOW", "deny", "modify", "guard",
     "BudgetGuard", "ToolFilterGuard",
     # multi-agent: orchestration topologies + grounded verifier
-    "supervisor", "pipeline", "DELEGATION_GUIDE",
+    "supervisor", "pipeline", "DELEGATION_GUIDE", "Team",
     "verifier", "VERIFY_PROMPT",
     # streaming events
     "TextDelta", "ToolCallStarted", "ToolCallFinished", "StepFinished", "Final",
