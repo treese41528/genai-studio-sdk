@@ -45,8 +45,14 @@ def make_load_dataset(namespace: dict | None = None):
         if namespace is not None:
             namespace[name] = df
             namespace["df"] = df
+        # Surface the label encoding: the frame includes a 'target' column (the
+        # LABEL, not a feature) whose integer codes map to these class names —
+        # otherwise an agent can't know e.g. breast_cancer target==1 is 'benign'.
+        names = getattr(bunch, "target_names", None)
+        tgt = (f"\n'target' is the label column (not a feature); classes: "
+               f"{dict(enumerate(map(str, names)))}" if names is not None else "")
         hint = f"\n(available in python_exec as `df` and `{name}`)" if namespace is not None else ""
-        return ToolResult(content=f"Loaded '{name}':\n{summarize(df)}{hint}", data=df)
+        return ToolResult(content=f"Loaded '{name}':\n{summarize(df)}{tgt}{hint}", data=df)
 
     return load_dataset
 
