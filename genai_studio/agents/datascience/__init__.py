@@ -21,20 +21,24 @@ from .prompts import DATA_ANALYST_SYSTEM
 
 
 def data_analyst(client, *, model: str = "qwen2.5:72b", **kw) -> Agent:
-    """Pre-assembled data-science agent: python_exec + load_dataset (sharing one
-    namespace) + fit_model + plot. A thin factory over the core ``Agent``.
+    """Pre-assembled data-science agent: python_exec + load_dataset + load_table
+    (your own CSV/Parquet/Excel/JSON, sharing one namespace) + fit_model + plot. A
+    thin factory over the core ``Agent``. For SQL or R, add ``make_sql_query(db)`` /
+    ``make_r_exec()`` from ``.tools.io_tools`` / ``.tools.r_exec``.
     """
     # Imported lazily so importing this package stays light.
     from genai_studio.agents.tools import calculator, final_answer
     from .tools.datasets import make_load_dataset
     from .tools.describe import describe_data
+    from .tools.io_tools import make_load_table
     from .tools.modeling import fit_model
     from .tools.plotting import plot
     from .tools.python_exec import make_python_exec
     from .tools.stats import hypothesis_test
 
     namespace: dict = {}
-    tools = [make_python_exec(namespace), make_load_dataset(namespace), describe_data,
+    tools = [make_python_exec(namespace), make_load_dataset(namespace),
+             make_load_table(namespace), describe_data,
              fit_model, hypothesis_test, plot, calculator, final_answer]
     return Agent(client=client, model=model, tools=tools, system=DATA_ANALYST_SYSTEM, **kw)
 
