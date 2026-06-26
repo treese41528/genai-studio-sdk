@@ -1,6 +1,6 @@
 # Examples — agentic data science
 
-Ten runnable scripts, each a focused concept, built on `genai_studio.agents`.
+Twelve runnable scripts, each a focused concept, built on `genai_studio.agents`.
 
 ## Setup
 
@@ -24,5 +24,7 @@ export GENAI_STUDIO_MODEL="qwen2.5:72b"  # optional; this model supports native 
 | `08_grounded_verifier.py` | A grounded `verifier` sub-agent (`kb_search`) exposed via `as_tool` to fact-check claims before answering. |
 | `09_orchestration.py` | The two team topologies: `supervisor` (dynamic delegation to workers-as-tools) and `pipeline` (fixed sequential stages). |
 | `10_guards.py` | Deterministic before/after-tool `Guard`s: a capability policy, PII redaction, and a tree-wide tool-call budget. |
+| `11_passk_eval.py` | Reliability eval: `evaluate(...)` runs each case k times → **pass^k** / pass@k / consistency, with L1 (`contains`/`used_tool`) + L2 (`llm_judge`) grading over JSONL traces. |
+| `12_team.py` | `Team`: a multi-agent tree correct by construction — one shared client/rate-limiter, auto-scoped tracing, tree-wide guards, and shared house rules, all stamped once. |
 
-`01`–`04`, `06`, `07`, `09`, `10` need only the core; `05` needs the `[datascience]` extra; `08` needs a knowledge base on the gateway (and `[grounding]` to also ground public stats via Data Commons).
+`01`–`04`, `06`, `07`, `09`, `10`, `11`, `12` need only the core; `05` needs the `[datascience]` extra; `08` needs a knowledge base on the gateway (and `[grounding]` to also ground public stats via Data Commons).
