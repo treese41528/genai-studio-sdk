@@ -70,7 +70,7 @@ from .guard import (
     guard,
     modify,
 )
-from .orchestrate import DELEGATION_GUIDE, pipeline, supervisor
+from .orchestrate import DELEGATION_GUIDE, EFFORT_PRESETS, effort_policy, pipeline, supervisor
 from .team import Team
 from .verify import VERIFY_PROMPT, verifier
 from .events import (
@@ -110,6 +110,7 @@ __all__ = [
     "BudgetGuard", "ToolFilterGuard",
     # multi-agent: orchestration topologies + grounded verifier
     "supervisor", "pipeline", "DELEGATION_GUIDE", "Team",
+    "effort_policy", "EFFORT_PRESETS",
     "verifier", "VERIFY_PROMPT",
     # streaming events
     "TextDelta", "ToolCallStarted", "ToolCallFinished", "StepFinished", "Final",

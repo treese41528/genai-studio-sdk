@@ -93,6 +93,7 @@ class Team:
     system_prefix: str | None = None
     cancel: Any = None
     budget: Any = None
+    max_depth: int | None = None
 
     def __post_init__(self):
         if self.tracer is None:
@@ -147,6 +148,7 @@ class Team:
     def supervisor(self, system: str, workers: Sequence[Agent], *,
                    name: str = "supervisor", depth: int = 0,
                    extra_tools: Sequence = (), guards: Sequence = (),
+                   max_depth: int | None = None, effort: str | None = None,
                    delegation_guide: bool = True, **kwargs) -> Agent:
         """Build a coordinator that delegates to ``workers`` (agents-as-tools).
 
@@ -155,7 +157,9 @@ class Team:
         rate-limiter guarantee), re-scopes each direct worker one level deeper than
         the manager, and applies the team tracer/guards/prefix to the manager.
         Depth is single-level (see the module docstring): a worker that is itself a
-        composite does not re-deepen its grandchildren.
+        composite does not re-deepen its grandchildren. ``max_depth`` (falling back
+        to the team's) caps delegation nesting; ``effort`` caps fan-out (see
+        :func:`~genai_studio.agents.orchestrate.supervisor`).
         """
         workers = self._checked_workers(workers)
         _reject_reserved(kwargs, _SUPERVISOR_RESERVED, "Team.supervisor()")
@@ -168,7 +172,8 @@ class Team:
             model=self.model, name=name, extra_tools=extra_tools,
             tracer=ScopedTracer(self.tracer, name, depth),
             cancel=self.cancel, budget=self.budget,
-            delegation_guide=delegation_guide,
+            max_depth=max_depth if max_depth is not None else self.max_depth,
+            effort=effort, delegation_guide=delegation_guide,
             guards=(*self.guards, *guards), **kwargs,
         )
 

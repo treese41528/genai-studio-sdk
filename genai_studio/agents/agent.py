@@ -22,11 +22,20 @@ worth reading: this is the teachable core.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import threading
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Sequence
+
+# Current delegation nesting depth, tracked across the actual call stack (a tool
+# closure can't see the caller's runtime Budget, so depth rides a ContextVar
+# instead). copy_context() makes it propagate into asyncio.to_thread workers and
+# across awaits, and each sibling delegation gets its own copy — so concurrent
+# fan-out can't corrupt the count. as_tool(max_depth=...) reads + bumps it.
+_delegation_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "genai_delegation_depth", default=0)
 
 from .client import (
     Message,
@@ -580,7 +589,7 @@ class Agent:
     # ── expose this agent AS a tool (the minimal multi-agent primitive) ──────
     def as_tool(self, name: str | None = None, description: str | None = None, *,
                 input_field: str = "task", budget=None, cancel=None,
-                use_async: bool = False) -> Tool:
+                max_depth: int | None = None, use_async: bool = False) -> Tool:
         """Wrap this agent as a :class:`Tool` so another agent can delegate to it.
 
         The sub-agent runs in an ISOLATED context (its own system prompt, tools,
@@ -611,6 +620,11 @@ class Agent:
                 under a FRESH COPY (same caps, independent counters) so a worker
                 hitting its cap degrades gracefully without aborting the manager.
             cancel: optional shared cancel token forwarded to each sub-run.
+            max_depth: max delegation NESTING allowed beneath this tool. Tracked
+                across the live call stack (not the Budget), so a manager→worker→
+                sub-worker chain is bounded: at depth ``max_depth`` this tool
+                returns an error result *without* running the sub-agent (rather
+                than raising) — the unbounded-recursion backstop. ``None`` = no cap.
             use_async: emit an async wrapper (calls ``arun``) instead of sync.
         """
         tool_name = name or self.name or "agent"
@@ -652,18 +666,38 @@ class Agent:
         def _missing() -> ToolResult:
             return ToolResult(content="", error=f"missing required argument {input_field!r}")
 
+        def _too_deep() -> ToolResult:
+            return ToolResult(
+                content="",
+                error=f"max delegation depth {max_depth} reached; {tool_name!r} not run "
+                      "(raise max_depth or flatten the agent tree).")
+
         if use_async:
             async def _delegate(**kwargs) -> ToolResult:
                 task = kwargs.get(input_field)
                 if not task:
                     return _missing()
-                return _to_result(await self.arun(task, budget=_child_budget(), cancel=cancel))
+                depth = _delegation_depth.get()
+                if max_depth is not None and depth >= max_depth:
+                    return _too_deep()
+                token = _delegation_depth.set(depth + 1)
+                try:
+                    return _to_result(await self.arun(task, budget=_child_budget(), cancel=cancel))
+                finally:
+                    _delegation_depth.reset(token)
         else:
             def _delegate(**kwargs) -> ToolResult:
                 task = kwargs.get(input_field)
                 if not task:
                     return _missing()
-                return _to_result(self.run(task, budget=_child_budget(), cancel=cancel))
+                depth = _delegation_depth.get()
+                if max_depth is not None and depth >= max_depth:
+                    return _too_deep()
+                token = _delegation_depth.set(depth + 1)
+                try:
+                    return _to_result(self.run(task, budget=_child_budget(), cancel=cancel))
+                finally:
+                    _delegation_depth.reset(token)
 
         _delegate.__name__ = tool_name
         _delegate.__doc__ = desc

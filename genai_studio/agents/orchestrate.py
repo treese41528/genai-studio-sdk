@@ -22,10 +22,12 @@ worker's client differs from the manager's.
 from __future__ import annotations
 
 import warnings
+from collections import namedtuple
 from dataclasses import replace
 from typing import Callable, Sequence
 
 from .agent import Agent, AgentResult, Budget
+from .guard import BudgetGuard
 
 DELEGATION_GUIDE = """\
 You coordinate specialist sub-agents, each exposed to you as a tool. When you delegate:
@@ -35,11 +37,37 @@ You coordinate specialist sub-agents, each exposed to you as a tool. When you de
 - match effort to the task — do not fan out many sub-agents for a simple question.
 When you have enough to answer, STOP delegating and give the final answer."""
 
+# Effort-scaling presets (Anthropic's lesson: vague delegation spawned ~50 subagents
+# for a trivial query). Each maps a coarse task class to a fan-out ceiling (a
+# BudgetGuard capping the MANAGER's own tool calls — its direct delegations — not
+# the whole sub-tree), a delegation-depth cap, and a prompt hint, so "match effort
+# to the task" is enforced, not just advised. Set effort on each supervisor for a
+# multi-level tree, or use Team for one genuinely tree-wide shared guard.
+_Effort = namedtuple("_Effort", "max_tool_calls max_depth hint")
+EFFORT_PRESETS = {
+    "simple": _Effort(
+        4, 1, "EFFORT — simple: answer directly or use at most ONE sub-agent; do not fan out."),
+    "comparison": _Effort(
+        10, 2, "EFFORT — comparison: delegate a FEW focused look-ups (~2-4), then synthesize yourself."),
+    "complex": _Effort(
+        24, 2, "EFFORT — complex: decompose into bounded subtasks and reuse results; "
+               "still avoid over-fanning-out."),
+}
+
+
+def effort_policy(level: str) -> _Effort:
+    """Look up an effort preset (``simple`` / ``comparison`` / ``complex``)."""
+    try:
+        return EFFORT_PRESETS[level]
+    except KeyError:
+        raise ValueError(f"unknown effort {level!r}; choose from {sorted(EFFORT_PRESETS)}.")
+
 
 def supervisor(client, system: str, workers: Sequence[Agent], *,
                model: str | None = None, name: str = "supervisor",
                extra_tools: Sequence = (), tracer=None, cancel=None,
-               budget=None, delegation_guide: bool = True, **agent_kwargs) -> Agent:
+               budget=None, max_depth: int | None = None, effort: str | None = None,
+               delegation_guide: bool = True, **agent_kwargs) -> Agent:
     """Build a coordinator :class:`Agent` that delegates to ``workers`` (agents-as-tools).
 
     Each worker is exposed via :meth:`Agent.as_tool` (isolated context, returns a
@@ -62,6 +90,13 @@ def supervisor(client, system: str, workers: Sequence[Agent], *,
         cancel: a shared cancel token forwarded into every worker run.
         budget: optional :class:`Budget`; each worker delegation runs under a fresh
             copy of it (per ``as_tool``) so a runaway worker degrades gracefully.
+        max_depth: cap on delegation NESTING beneath the manager (forwarded into
+            every worker's ``as_tool``) — the unbounded-recursion backstop.
+        effort: ``"simple"`` / ``"comparison"`` / ``"complex"`` — a preset that
+            caps this manager's own fan-out (a ``BudgetGuard`` on the manager's
+            direct tool calls — NOT propagated into sub-supervisors), sets a
+            sensible ``max_depth`` (unless given), and appends a prompt hint, so
+            "match effort to the task" is enforced, not merely advised.
         delegation_guide: append the prescriptive ``DELEGATION_GUIDE`` to ``system``.
         **agent_kwargs: forwarded to the manager :class:`Agent` (e.g. ``max_steps``).
     """
@@ -79,18 +114,27 @@ def supervisor(client, system: str, workers: Sequence[Agent], *,
                 stacklevel=2)
             break
 
+    guards = list(agent_kwargs.pop("guards", ()) or ())
+    if effort:
+        eff = effort_policy(effort)
+        if max_depth is None:
+            max_depth = eff.max_depth
+        guards.append(BudgetGuard(max_tool_calls=eff.max_tool_calls))  # caps the manager's own fan-out
+        system = f"{system}\n\n{eff.hint}"
+
     # Reserve the manager's own tool names so a worker can't shadow final_answer/
     # finish (which the loop treats as terminal) or an extra_tool.
     reserved = {"final_answer", "finish",
                 *(getattr(t, "name", getattr(t, "__name__", None)) for t in extra_tools)}
-    worker_tools = _unique_as_tools(workers, cancel=cancel, budget=budget, reserved=reserved)
+    worker_tools = _unique_as_tools(workers, cancel=cancel, budget=budget,
+                                    reserved=reserved, max_depth=max_depth)
     sys_prompt = system + ("\n\n" + DELEGATION_GUIDE if delegation_guide else "")
     if tracer is not None:
         agent_kwargs.setdefault("tracer", tracer)
     from .tools.general import final_answer  # lazy: keep agents-init light
     return Agent(client=client, model=model, name=name,
                  tools=[*worker_tools, *extra_tools, final_answer],
-                 system=sys_prompt, **agent_kwargs)
+                 system=sys_prompt, guards=guards, **agent_kwargs)
 
 
 def pipeline(stages: Sequence[Agent], *, cancel=None,
@@ -137,7 +181,7 @@ def pipeline(stages: Sequence[Agent], *, cancel=None,
     return run
 
 
-def _unique_as_tools(workers, *, cancel, budget=None, reserved=None):
+def _unique_as_tools(workers, *, cancel, budget=None, reserved=None, max_depth=None):
     """Expose each worker as a tool with a name unique across workers AND the
     manager's reserved/extra tool names (so no worker shadows ``final_answer`` etc.)."""
     seen: set[str] = {n for n in (reserved or ()) if n}
@@ -148,7 +192,7 @@ def _unique_as_tools(workers, *, cancel, budget=None, reserved=None):
         while nm in seen:
             nm, k = f"{base}_{k}", k + 1
         seen.add(nm)
-        tools.append(w.as_tool(name=nm, cancel=cancel, budget=budget))
+        tools.append(w.as_tool(name=nm, cancel=cancel, budget=budget, max_depth=max_depth))
     return tools
 
 
