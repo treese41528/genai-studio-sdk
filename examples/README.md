@@ -1,6 +1,6 @@
 # Examples — agentic data science
 
-Twelve runnable scripts, each a focused concept, built on `genai_studio.agents`.
+Thirteen runnable scripts, each a focused concept, built on `genai_studio.agents`.
 
 ## Setup
 
@@ -26,5 +26,6 @@ export GENAI_STUDIO_MODEL="qwen2.5:72b"  # optional; this model supports native 
 | `10_guards.py` | Deterministic before/after-tool `Guard`s: a capability policy, PII redaction, and a tree-wide tool-call budget. |
 | `11_passk_eval.py` | Reliability eval: `evaluate(...)` runs each case k times → **pass^k** / pass@k / consistency, with L1 (`contains`/`used_tool`) + L2 (`llm_judge`) grading over JSONL traces. |
 | `12_team.py` | `Team`: a multi-agent tree correct by construction — one shared client/rate-limiter, auto-scoped tracing, tree-wide guards, and shared house rules, all stamped once. |
+| `13_arxiv_to_sql.py` | Research pipeline: `arxiv_search` → ingest into SQLite → read-only `sql_query` → `r_exec` (base R) analysis; the read/write split (writes via trusted code, the agent only reads), then an optional Agent orchestrating SQL + R. |
 
-`01`–`04`, `06`, `07`, `09`, `10`, `11`, `12` need only the core; `05` needs the `[datascience]` extra; `08` needs a knowledge base on the gateway (and `[grounding]` to also ground public stats via Data Commons).
+`01`–`04`, `06`, `07`, `09`, `10`, `11`, `12` need only the core; `05` needs the `[datascience]` extra; `08` needs a knowledge base on the gateway (and `[grounding]` to also ground public stats via Data Commons). `13` needs `[datascience]` + network (arXiv) + R installed (`Rscript`); its final Agent section needs the gateway.
