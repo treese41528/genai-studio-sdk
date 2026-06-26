@@ -42,8 +42,10 @@ datascience = [
 ]
 # Grounding: Data Commons statistical knowledge graph for the verifier sub-agent.
 grounding = ["datacommons-client>=2.0"]
-test = ["pytest>=7", "pydantic>=1.10"]
-dev = ["genai-studio-sdk[datascience,structured,grounding,test]", "pytest-cov"]
+# Knowledge authoring: nicer OKF frontmatter parsing (a stdlib fallback works without it).
+knowledge = ["pyyaml"]
+test = ["pytest>=7", "pydantic>=1.10", "pyyaml"]
+dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,test]", "pytest-cov"]
 
 [project.urls]
 Homepage = "https://github.com/treese41528/genai-studio-sdk"
