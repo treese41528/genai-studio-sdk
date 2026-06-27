@@ -14,6 +14,10 @@ and maps rows onto ``agentic_eval.Task``:
 - **musique**    — MULTI-HOP questions (2-4 reasoning hops) with short entity golds;
   tests whether retrieval/grounding lets the agent chain facts it can't recall.
   Hybrid-graded (short gold -> deterministic floor, residual -> judge).  [CC-BY-4.0]
+- **bfcl** / **bfcl_irrelevance** — Berkeley Function-Calling Leaderboard v3: the agent
+  gets the function(s) as tools and is graded on the CALL it emits (deterministic AST
+  match vs gold; for irrelevance, correct == calling NO function). Call-graded, not
+  text-graded — condition-independent (run with one condition).         [Apache-2.0]
 
 These are JUDGE-graded by design (free-form answers); the deterministic floor is
 only meaningful for gsm8k (exact numbers). Data is downloaded, not vendored, to
@@ -40,19 +44,23 @@ SOURCES = {
 }
 
 
-def _fetch(name: str) -> str:
-    """Download + cache the raw dataset text (idempotent)."""
+def _fetch_url(url: str, cache_name: str) -> str:
+    """Download + cache raw dataset text by URL (idempotent)."""
     os.makedirs(_DATA, exist_ok=True)
-    ext = os.path.splitext(SOURCES[name])[1] or ".txt"
-    path = os.path.join(_DATA, name + ext)
+    path = os.path.join(_DATA, cache_name)
     if not os.path.exists(path):
         with httpx.Client(timeout=60, follow_redirects=True) as c:
-            r = c.get(SOURCES[name])
+            r = c.get(url)
             r.raise_for_status()
         with open(path, "w", encoding="utf-8") as f:
             f.write(r.text)
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def _fetch(name: str) -> str:
+    ext = os.path.splitext(SOURCES[name])[1] or ".txt"
+    return _fetch_url(SOURCES[name], name + ext)
 
 
 def _sample(items: list, n: int, seed: int) -> list:
@@ -111,8 +119,44 @@ def load_musique(n: int = 20, *, seed: int = 0) -> list:
     return out
 
 
+_BFCL = ("https://huggingface.co/datasets/gorilla-llm/"
+         "Berkeley-Function-Calling-Leaderboard/resolve/main")
+
+
+def _bfcl_rows(cat: str, answers: bool = False) -> list:
+    sub = f"possible_answer/BFCL_v3_{cat}.json" if answers else f"BFCL_v3_{cat}.json"
+    cache = f"bfcl_{cat}{'_ans' if answers else ''}.json"
+    return [json.loads(ln) for ln in _fetch_url(f"{_BFCL}/{sub}", cache).splitlines() if ln.strip()]
+
+
+def load_bfcl(n: int = 20, *, seed: int = 0, category: str = "simple") -> list:
+    """BFCL (Berkeley Function-Calling Leaderboard) v3 — tool-call correctness. The
+    agent is given the function(s) as tools and graded on the CALL it emits (AST match
+    vs gold for 'simple'; for 'irrelevance', correct == calling NO function)."""
+    from agentic_eval import Task
+    q = {r["id"]: r for r in _bfcl_rows(category)}
+    if category == "irrelevance":
+        out = []
+        for r in _sample(list(q.values()), n, seed):
+            out.append(Task(r["id"], "bfcl_irrelevance", r["question"][0][0]["content"].strip(),
+                            note="no relevant function -> do not call",
+                            meta={"functions": r["function"], "kind": "irrelevance"}))
+        return out
+    ans = {r["id"]: r for r in _bfcl_rows(category, answers=True)}
+    rows = [r for r in q.values() if r["id"] in ans]
+    out = []
+    for r in _sample(rows, n, seed):
+        gold = ans[r["id"]]["ground_truth"]
+        out.append(Task(r["id"], "bfcl", r["question"][0][0]["content"].strip(),
+                        note=json.dumps(gold)[:140],
+                        meta={"functions": r["function"], "kind": "ast", "gold": gold}))
+    return out
+
+
 LOADERS = {"gsm8k": load_gsm8k, "truthfulqa": load_truthfulqa, "simpleqa": load_simpleqa,
-           "musique": load_musique}
+           "musique": load_musique,
+           "bfcl": lambda n, seed=0: load_bfcl(n, seed=seed, category="simple"),
+           "bfcl_irrelevance": lambda n, seed=0: load_bfcl(n, seed=seed, category="irrelevance")}
 
 
 if __name__ == "__main__":   # smoke: fetch + parse 2 of each, print the mapped Tasks

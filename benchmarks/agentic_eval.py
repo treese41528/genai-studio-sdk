@@ -51,6 +51,13 @@ the hallucination rate:
 The built-in TASKS remain useful for the ``false_premise`` category (which no
 public benchmark covers as directly), and as a fast offline smoke set.
 
+``bfcl`` / ``bfcl_irrelevance`` grade TOOL-CALL correctness: the agent is handed the
+benchmark's function(s) as tools and graded on the *call* it emits (AST match vs
+gold; irrelevance => correct means calling NO function — a tool-call refusal). These
+are call-graded, not text-graded, and condition-independent — run with one condition:
+
+    python benchmarks/agentic_eval.py --benchmarks bfcl bfcl_irrelevance --n 40 --k 3
+
 Live, gateway-bound (~20 RPM, resumable via the eval harness's trace dir).
 """
 
@@ -61,7 +68,7 @@ import os
 import random
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from genai_studio.agents import Agent, NullTracer
 from genai_studio.agents.eval import Case, evaluate
@@ -86,6 +93,7 @@ class Task:
     rng: tuple | None = None       # (lo, hi) acceptable numeric range (grounded magnitudes)
     must_refuse: bool = False      # false-premise: correct == abstain/refuse
     note: str = ""                 # gold provenance
+    meta: dict = field(default_factory=dict)   # extra payload (e.g. BFCL functions + gold call)
 
 
 TASKS: list[Task] = [
@@ -356,8 +364,142 @@ def _verifier_tool(client, model):
                      max_depth=1)
 
 
-def make_factory(condition: str, client, model):
+# ── BFCL: function-calling correctness (grades the emitted CALL, not the text) ──
+BFCL_SYSTEM = (
+    "You are given one or more callable functions. If a function can fulfil the user's "
+    "request, CALL it with arguments taken directly from the request (correct names, types, "
+    "and values). If NONE of the available functions is relevant to the request, do NOT call "
+    "any function — reply in plain text that no suitable function is available."
+)
+_JSON_TYPES = {"dict": "object", "float": "number", "tuple": "array", "any": "string",
+               "integer": "integer", "string": "string", "boolean": "boolean", "bool": "boolean",
+               "array": "array", "number": "number", "object": "object", "null": "null"}
+
+
+def _safe_name(name: str) -> str:
+    """BFCL function names can contain dots (music_generator.generate_melody); tool
+    names must match ^[A-Za-z0-9_-]{1,64}$, so map invalid chars to '_' consistently
+    (used for the synthesized tool name AND when matching the gold call)."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", name)[:64]
+
+
+def _sanitize_schema(node):
+    """Map BFCL's Python-ish JSON-schema types (dict/float/tuple/any) to valid JSON
+    Schema types so the gateway accepts the synthesized tool spec."""
+    if isinstance(node, dict):
+        out = {}
+        for k, v in node.items():
+            if k == "type" and isinstance(v, str):
+                out[k] = _JSON_TYPES.get(v.lower(), "string")
+            elif k in ("properties", "items", "additionalProperties"):
+                out[k] = _sanitize_schema(v)
+            else:
+                out[k] = _sanitize_schema(v) if isinstance(v, (dict, list)) else v
+        return out
+    if isinstance(node, list):
+        return [_sanitize_schema(x) for x in node]
+    return node
+
+
+def _bfcl_tool(fn_schema: dict):
+    """Synthesize a STUB tool from a BFCL function schema — it records nothing and
+    returns 'ok'; BFCL grades the call the agent emits, not the execution."""
+    from genai_studio.agents import Tool, ToolResult, ToolSpec
+    params = _sanitize_schema(fn_schema.get("parameters") or {"type": "object", "properties": {}})
+    params.setdefault("type", "object")
+    name = _safe_name(fn_schema["name"])
+    spec = ToolSpec(name=name, description=fn_schema.get("description", ""), parameters=params)
+
+    def _stub(**kwargs):
+        return ToolResult(content="ok")
+
+    _stub.__name__ = name
+    return Tool(_stub, spec)
+
+
+def _val_eq(a, b) -> bool:
+    """Emitted value `a` matches a single gold allowed-value `b`, RECURSING into
+    containers (the official BFCL checker compares key/element-wise, not by str — so
+    a list of whole floats [3.0] matches the int emission [3], and a nested object
+    spec matches the emitted dict)."""
+    if isinstance(b, dict):                        # nested object: b maps inner keys -> allowed lists
+        return isinstance(a, dict) and _params_match(b, a)
+    if isinstance(b, (list, tuple)):               # list/array arg: element-wise, length-equal
+        return isinstance(a, (list, tuple)) and len(a) == len(b) and all(_val_eq(x, y) for x, y in zip(a, b))
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a == b
+    try:
+        return abs(float(a) - float(b)) < 1e-9     # numeric: 3 == 3.0
+    except (TypeError, ValueError):
+        return str(a).strip().lower() == str(b).strip().lower()
+
+
+def _params_match(spec: dict, args: dict) -> bool:
+    """Match emitted ``args`` against a BFCL param spec ``{param: [allowed values]}``:
+    every required param present with a value in its allowed set (optional iff '' or
+    None is allowed), and no extra args. Recurses for nested object params via _val_eq."""
+    args = args or {}
+    for p, allowed in spec.items():
+        if not isinstance(allowed, list):
+            allowed = [allowed]
+        optional = any(a == "" or a is None for a in allowed)
+        if p not in args:
+            if not optional:
+                return False
+            continue
+        if not any(_val_eq(args[p], a) for a in allowed):
+            return False
+    return all(p in spec for p in args)            # reject extra args not in the spec
+
+
+def _bfcl_ast_match(gold_list: list, name: str, args: dict) -> bool:
+    """AST-match the emitted call against BFCL ground truth (a faithful subset of the
+    official checker): function name equal; params match recursively (nested objects +
+    list args). Parallel / multi-call categories are out of scope (single-call 'simple')."""
+    if not gold_list:
+        return False
+    gname, params = next(iter(gold_list[0].items()))
+    if name != _safe_name(gname):                  # gold uses the dotted name; tool name is sanitized
+        return False
+    return _params_match(params, args or {})
+
+
+def _first_call(result, fn_names: set):
+    for step in result.steps:
+        for call in (step.tool_calls or []):
+            if getattr(call, "name", None) in fn_names:
+                return call
+    return None
+
+
+def _bfcl_grader(task: Task):
+    """Grade by inspecting the agent's emitted tool CALL. irrelevance: correct iff NO
+    function was called (a tool-call refusal); ast: correct iff the call AST-matches."""
+    fn_names = {_safe_name(f["name"]) for f in task.meta.get("functions", [])}
+    kind, gold = task.meta.get("kind"), task.meta.get("gold")
+
+    def check(case, result, trace_path):
+        call = _first_call(result, fn_names)
+        if kind == "irrelevance":                  # correct == did NOT call a function
+            v = "incorrect" if call is not None else "correct"
+        elif call is None:
+            v = "not_attempted"                    # never called the function at all
+        else:
+            v = "correct" if _bfcl_ast_match(gold, call.name, call.arguments or {}) else "incorrect"
+        return (1.0 if v == "correct" else 0.0), v
+    return check
+
+
+def make_factory(condition: str, client, model, task_by_id: dict | None = None):
+    task_by_id = task_by_id or {}
+
     def factory(case, tracer):
+        task = task_by_id.get(case.id)
+        if task is not None and task.meta.get("functions"):     # BFCL: stub-tool agent
+            from genai_studio.agents.tools import final_answer
+            tools = [_bfcl_tool(f) for f in task.meta["functions"]] + [final_answer]
+            return Agent(client=client, model=model, tools=tools, system=BFCL_SYSTEM,
+                         tracer=tracer, max_steps=4)
         ns: dict = {}                            # fresh namespace per run (independent)
         tools = _base_tools(ns)
         if condition in ("grounded", "verifier"):
@@ -439,8 +581,13 @@ def aggregate(condition: str, tasks: list[Task], report) -> dict:
     for c in report.cases:
         t = by_id[c.case_id]
         verdicts = [_verdict_of(run) for run in c.runs]
+        # pass^k from the VERDICTS (all k correct), not eval's pass_pow_k — the latter
+        # also requires non-blank final text, which wrongly fails a CORRECT but
+        # text-empty BFCL call (the call is the unit of correctness). Keeps accuracy
+        # and pass^k consistent (both off the same verdicts) for every task type.
         record = {"id": c.case_id, "verdicts": verdicts,
-                  "passk": bool(c.pass_pow_k), "consistency": c.consistency}
+                  "passk": bool(verdicts) and all(v == "correct" for v in verdicts),
+                  "consistency": c.consistency}
         for grp in (t.category, "ALL"):
             recs[grp].append(record)
             for run, v in zip(c.runs, verdicts):
@@ -449,8 +596,9 @@ def aggregate(condition: str, tasks: list[Task], report) -> dict:
                 correct_tool[grp] += (v == "correct" and used)
                 if run.tokens:
                     tok[grp].append(run.tokens)
-                det[grp].append(classify(t, run.answer))
-                rec_v[grp].append(v)
+                if not t.meta.get("functions"):      # kappa only over TEXT-graded tasks (BFCL is call-graded)
+                    det[grp].append(classify(t, run.answer))
+                    rec_v[grp].append(v)
     out = {"_records": dict(recs)}            # per-task records kept for paired condition deltas
     for grp, rs in recs.items():
         flat = _flat(rs)
@@ -561,7 +709,7 @@ def main() -> None:
     ap.add_argument("--deterministic", action="store_true",
                     help="use the fast regex 3-way grader (a FLOOR) instead of the default LLM judge")
     ap.add_argument("--benchmarks", nargs="+", default=None,
-                    choices=["gsm8k", "truthfulqa", "simpleqa", "musique"],
+                    choices=["gsm8k", "truthfulqa", "simpleqa", "musique", "bfcl", "bfcl_irrelevance"],
                     help="ground the eval in real benchmark datasets instead of the built-in TASKS")
     ap.add_argument("--n", type=int, default=20, help="sample size per benchmark (with --benchmarks)")
     args = ap.parse_args()
@@ -589,11 +737,14 @@ def main() -> None:
           f"model={args.model or 'default'}  "
           f"grader={'deterministic' if args.deterministic else 'hybrid(det+judge)'}")
 
+    task_by_id = {t.id: t for t in tasks}
+    cases = [Case(t.id, t.prompt,
+                  check=_bfcl_grader(t) if t.meta.get("functions") else _correct_grader(t, classify_fn))
+             for t in tasks]
     per_condition = {}
     for cond in args.conditions:
         print(f"\n--- running condition: {cond} ---")
-        cases = [Case(t.id, t.prompt, check=_correct_grader(t, classify_fn)) for t in tasks]
-        report = evaluate(make_factory(cond, client, model), cases, k=args.k,
+        report = evaluate(make_factory(cond, client, model, task_by_id), list(cases), k=args.k,
                           trace_dir=os.path.join(TRACE_ROOT, cond))
         per_condition[cond] = aggregate(cond, tasks, report)
 
