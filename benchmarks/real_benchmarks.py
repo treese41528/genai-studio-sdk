@@ -11,6 +11,9 @@ and maps rows onto ``agentic_eval.Task``:
 - **simpleqa**   — short, obscure factual questions models often get wrong; the
   canonical hallucination benchmark. Hard enough that grounding can actually help.
   Judge-graded against the gold answer.                        [MIT, OpenAI]
+- **musique**    — MULTI-HOP questions (2-4 reasoning hops) with short entity golds;
+  tests whether retrieval/grounding lets the agent chain facts it can't recall.
+  Hybrid-graded (short gold -> deterministic floor, residual -> judge).  [CC-BY-4.0]
 
 These are JUDGE-graded by design (free-form answers); the deterministic floor is
 only meaningful for gsm8k (exact numbers). Data is downloaded, not vendored, to
@@ -33,6 +36,7 @@ SOURCES = {
              "grade_school_math/data/test.jsonl",
     "truthfulqa": "https://raw.githubusercontent.com/sylinrl/TruthfulQA/main/TruthfulQA.csv",
     "simpleqa": "https://openaipublic.blob.core.windows.net/simple-evals/simple_qa_test_set.csv",
+    "musique": "https://huggingface.co/datasets/RUC-NLPIR/FlashRAG_datasets/resolve/main/musique/dev.jsonl",
 }
 
 
@@ -94,7 +98,21 @@ def load_simpleqa(n: int = 20, *, seed: int = 0) -> list:
     return out
 
 
-LOADERS = {"gsm8k": load_gsm8k, "truthfulqa": load_truthfulqa, "simpleqa": load_simpleqa}
+def load_musique(n: int = 20, *, seed: int = 0) -> list:
+    from agentic_eval import Task
+    rows = [json.loads(ln) for ln in _fetch("musique").splitlines() if ln.strip()]
+    out = []
+    for i, r in enumerate(_sample(rows, n, seed)):
+        gold = [a for a in (r.get("golden_answers") or []) if a]
+        if not gold:
+            continue
+        out.append(Task(f"musq_{i}", "musique", r["question"].strip(),
+                        accept=tuple(gold), note="; ".join(gold)))
+    return out
+
+
+LOADERS = {"gsm8k": load_gsm8k, "truthfulqa": load_truthfulqa, "simpleqa": load_simpleqa,
+           "musique": load_musique}
 
 
 if __name__ == "__main__":   # smoke: fetch + parse 2 of each, print the mapped Tasks

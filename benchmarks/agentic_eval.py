@@ -8,8 +8,13 @@ Runs each task k times per CONDITION and reports, beyond pass^k:
 - **abstention rate** = not_attempted / total (honest "I don't know" / refuses a
   false premise) — SimpleQA's three-way grade (correct / incorrect / not-attempted)
 - **pass^k / pass@k / consistency** (reliability, from genai_studio.agents.eval)
+- **F-score** (SimpleQA) — harmonic mean of accuracy and correct-given-attempted;
+  rewards calibrated abstention (0 for always-abstain AND for reckless guessing).
 - **grnd%** — of the CORRECT answers, the share that actually called a tool
-  (distinguishes genuine grounding from lucky parametric recall) + token cost.
+  (genuine grounding vs lucky parametric recall) + token cost.
+- **task-clustered bootstrap 95% CIs** on every rate, **paired baseline→condition Δ**
+  (a Δ whose CI crosses 0 is "directional, not significant"; ``*`` = CI excludes 0),
+  and **judge↔det κ** (Cohen's kappa) — a standing trust number for the grader.
 
 Grading is HYBRID by default: deterministic where it's reliable (exact-numeric /
 gold-present-verbatim) and an LLM judge only where it's needed (free-form answers
@@ -53,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -283,9 +289,15 @@ def classify_hybrid(client, task: Task, answer: str, *, model=None) -> str:
 
 
 def _verdict_of(run) -> str:
-    """Read the verdict the grader stored in detail; a run/grader error -> not_attempted."""
-    d = (run.detail or "").strip()
-    return d if d in ("correct", "incorrect", "not_attempted") else "not_attempted"
+    """Read the verdict the grader stored in detail; robust to detail carrying extra
+    text (e.g. if a judge is ever wired into evaluate, detail = 'correct; judge:...').
+    Order matters: 'incorrect'/'not_attempted' are checked before 'correct' (which is
+    a substring of 'incorrect'). A run/grader error with no verdict -> not_attempted."""
+    d = run.detail or ""
+    for v in ("not_attempted", "incorrect", "correct"):
+        if v in d:
+            return v
+    return "not_attempted"
 
 
 def _correct_grader(task: Task, classify_fn):
@@ -375,63 +387,168 @@ def _trace_tool_calls(path: str | None) -> int:
     return n
 
 
+def _rate(verdicts: list, target: str) -> float:
+    return sum(v == target for v in verdicts) / len(verdicts) if verdicts else 0.0
+
+
+def _fscore(verdicts: list) -> float:
+    """SimpleQA F-score: harmonic mean of accuracy and correct-given-attempted. 0 for
+    always-abstain AND for reckless guessing — rewards calibrated 'I don't know'."""
+    c = sum(v == "correct" for v in verdicts)
+    i = sum(v == "incorrect" for v in verdicts)
+    n = len(verdicts) or 1
+    acc, cga = c / n, (c / (c + i) if (c + i) else 0.0)
+    return 2 * acc * cga / (acc + cga) if (acc + cga) else 0.0
+
+
+def _flat(recs: list) -> list:
+    return [v for r in recs for v in r["verdicts"]]
+
+
+def _ci(task_recs: list, reducer, *, n_boot: int = 2000, seed: int = 0):
+    """Task-clustered bootstrap 95% CI: resample TASKS with replacement (each task's k
+    run-verdicts stay together — runs of one task aren't independent), recompute the
+    metric, return (p2.5, p97.5). None when there are too few tasks to bootstrap."""
+    t = len(task_recs)
+    if t < 2:
+        return None
+    rng = random.Random(seed)
+    vals = sorted(reducer([task_recs[rng.randrange(t)] for _ in range(t)]) for _ in range(n_boot))
+    return (vals[int(0.025 * n_boot)], vals[min(int(0.975 * n_boot), n_boot - 1)])
+
+
+def _kappa(a: list, b: list):
+    """Cohen's kappa between two verdict lists (here: deterministic vs the recorded
+    grader) — a standing trust number for a judge-graded run."""
+    cats, n = ("correct", "incorrect", "not_attempted"), len(a)
+    if n == 0:
+        return None
+    po = sum(x == y for x, y in zip(a, b)) / n
+    pe = sum((a.count(c) / n) * (b.count(c) / n) for c in cats)
+    return (po - pe) / (1 - pe) if (1 - pe) > 1e-9 else 1.0
+
+
 def aggregate(condition: str, tasks: list[Task], report) -> dict:
     by_id = {t.id: t for t in tasks}
-    rows: dict = defaultdict(lambda: {"correct": 0, "incorrect": 0, "not_attempted": 0,
-                                      "n": 0, "passk": [], "consistency": [], "tool_runs": 0,
-                                      "correct_tool": 0, "tokens": []})
+    recs: dict = defaultdict(list)            # grp -> [ {verdicts, passk, consistency} per task ]
+    tok: dict = defaultdict(list)
+    tool_runs: dict = defaultdict(int)
+    correct_tool: dict = defaultdict(int)
+    det: dict = defaultdict(list)             # deterministic verdicts (for kappa vs recorded)
+    rec_v: dict = defaultdict(list)
     for c in report.cases:
         t = by_id[c.case_id]
-        facts = [(_verdict_of(run), _trace_tool_calls(run.trace_path) > 0, run.tokens)
-                 for run in c.runs]                     # read each trace once
+        verdicts = [_verdict_of(run) for run in c.runs]
+        record = {"id": c.case_id, "verdicts": verdicts,
+                  "passk": bool(c.pass_pow_k), "consistency": c.consistency}
         for grp in (t.category, "ALL"):
-            r = rows[grp]
-            r["passk"].append(1.0 if c.pass_pow_k else 0.0)
-            r["consistency"].append(c.consistency)
-            for verdict, used_tool, tokens in facts:
-                r["n"] += 1
-                r[verdict] += 1
-                if used_tool:
-                    r["tool_runs"] += 1
-                if verdict == "correct" and used_tool:
-                    r["correct_tool"] += 1                # a CORRECT answer that actually used a tool
-                if tokens:
-                    r["tokens"].append(tokens)
-    out = {}
-    for grp, r in rows.items():
-        n = r["n"] or 1
+            recs[grp].append(record)
+            for run, v in zip(c.runs, verdicts):
+                used = _trace_tool_calls(run.trace_path) > 0
+                tool_runs[grp] += used
+                correct_tool[grp] += (v == "correct" and used)
+                if run.tokens:
+                    tok[grp].append(run.tokens)
+                det[grp].append(classify(t, run.answer))
+                rec_v[grp].append(v)
+    out = {"_records": dict(recs)}            # per-task records kept for paired condition deltas
+    for grp, rs in recs.items():
+        flat = _flat(rs)
+        n = len(flat) or 1
+        c_cnt = sum(v == "correct" for v in flat)
         out[grp] = {
-            "n": r["n"],
-            "accuracy": r["correct"] / n,
-            "hallucination": r["incorrect"] / n,
-            "abstention": r["not_attempted"] / n,
-            "pass^k": sum(r["passk"]) / (len(r["passk"]) or 1),
-            "consistency": sum(r["consistency"]) / (len(r["consistency"]) or 1),
-            "tool_use": r["tool_runs"] / n,
-            # of the CORRECT answers, the share that actually used a tool — distinguishes
-            # genuine grounding from lucky parametric recall (None when nothing was correct).
-            "grounded": (r["correct_tool"] / r["correct"]) if r["correct"] else None,
-            "mean_tokens": (sum(r["tokens"]) / len(r["tokens"])) if r["tokens"] else None,
+            "n": len(flat),
+            "accuracy": _rate(flat, "correct"),
+            "hallucination": _rate(flat, "incorrect"),
+            "abstention": _rate(flat, "not_attempted"),
+            "fscore": _fscore(flat),
+            "pass^k": sum(r["passk"] for r in rs) / len(rs),
+            "consistency": sum(r["consistency"] for r in rs) / len(rs),
+            "tool_use": tool_runs[grp] / n,
+            "grounded": (correct_tool[grp] / c_cnt) if c_cnt else None,
+            "mean_tokens": (sum(tok[grp]) / len(tok[grp])) if tok[grp] else None,
+            "kappa": _kappa(det[grp], rec_v[grp]),
+            "ci": {
+                "accuracy": _ci(rs, lambda x: _rate(_flat(x), "correct")),
+                "hallucination": _ci(rs, lambda x: _rate(_flat(x), "incorrect")),
+                "fscore": _ci(rs, lambda x: _fscore(_flat(x))),
+                "pass^k": _ci(rs, lambda x: sum(r["passk"] for r in x) / len(x)),
+            },
         }
+    return out
+
+
+def condition_deltas(per_condition: dict, base: str = "baseline") -> list:
+    """Paired base->condition Δ (accuracy/hallucination/F) with a task-clustered
+    bootstrap CI. Pairs by task position (same task set + order across conditions); a
+    CI that crosses 0 means the difference is not significant ('directional')."""
+    if base not in per_condition:
+        return []
+    base_by_id = {r["id"]: r for r in per_condition[base].get("_records", {}).get("ALL", [])}
+    metrics = (("Δacc", lambda v: _rate(v, "correct")),
+               ("Δhalluc", lambda v: _rate(v, "incorrect")),
+               ("ΔF", _fscore))
+    out = []
+    for cond, agg in per_condition.items():
+        if cond == base:
+            continue
+        cond_by_id = {r["id"]: r for r in agg.get("_records", {}).get("ALL", [])}
+        # pair by task id (not position) so a CI is never computed on mis-aligned tasks
+        pairs = [(base_by_id[i], cond_by_id[i]) for i in base_by_id if i in cond_by_id]
+        if len(pairs) < 2:
+            continue
+        row = {"condition": cond}
+        for name, metric in metrics:
+            point = metric(_flat([p[1] for p in pairs])) - metric(_flat([p[0] for p in pairs]))
+            ci = _ci(pairs, lambda s, m=metric: m(_flat([p[1] for p in s])) - m(_flat([p[0] for p in s])))
+            row[name] = (point, ci)
+        out.append(row)
     return out
 
 
 _CATS = ("compute", "factual", "false_premise", "grounded", "ALL")
 
 
+def _pct_ci(ci) -> str:
+    return f"[{ci[0]:.0%}-{ci[1]:.0%}]" if ci else ""
+
+
 def print_report(per_condition: dict) -> None:
     for cond, agg in per_condition.items():
-        print(f"\n{'=' * 78}\ncondition: {cond}\n{'=' * 78}")
+        kappa = agg.get("ALL", {}).get("kappa")
+        ktag = f"   (judge↔det κ={kappa:.2f})" if kappa is not None else ""
+        print(f"\n{'=' * 78}\ncondition: {cond}{ktag}\n{'=' * 78}")
         print(f"{'category':<15}{'n':>4}{'acc':>7}{'halluc':>8}{'abstain':>9}"
-              f"{'pass^k':>8}{'consist':>9}{'tool%':>7}{'grnd%':>7}{'tok':>7}")
-        cats = sorted(c for c in agg if c != "ALL") + (["ALL"] if "ALL" in agg else [])
+              f"{'F':>6}{'pass^k':>8}{'consist':>8}{'tool%':>7}{'grnd%':>7}{'tok':>7}")
+        cats = sorted(c for c in agg if c not in ("ALL", "_records")) + (["ALL"] if "ALL" in agg else [])
         for cat in cats:
             m = agg[cat]
             tok = f"{m['mean_tokens']:.0f}" if m["mean_tokens"] else "-"
             grnd = f"{m['grounded']:.0%}" if m["grounded"] is not None else "-"
             print(f"{cat:<15}{m['n']:>4}{m['accuracy']:>7.0%}{m['hallucination']:>8.0%}"
-                  f"{m['abstention']:>9.0%}{m['pass^k']:>8.0%}{m['consistency']:>9.0%}"
-                  f"{m['tool_use']:>7.0%}{grnd:>7}{tok:>7}")
+                  f"{m['abstention']:>9.0%}{m['fscore']:>6.2f}{m['pass^k']:>8.0%}"
+                  f"{m['consistency']:>8.0%}{m['tool_use']:>7.0%}{grnd:>7}{tok:>7}")
+        ci = agg.get("ALL", {}).get("ci", {})
+        if ci.get("fscore"):                   # all CIs are None when ALL has <2 tasks
+            print(f"  95% CI (ALL): acc{_pct_ci(ci['accuracy'])} halluc{_pct_ci(ci['hallucination'])} "
+                  f"F[{ci['fscore'][0]:.2f}-{ci['fscore'][1]:.2f}] pass^k{_pct_ci(ci['pass^k'])}")
+
+
+def print_deltas(per_condition: dict, base: str = "baseline") -> None:
+    rows = condition_deltas(per_condition, base)
+    if not rows:
+        return
+    print(f"\n{'=' * 78}\nΔ vs {base} (ALL, paired bootstrap 95% CI; CI crossing 0 = not significant)"
+          f"\n{'=' * 78}")
+    for row in rows:
+        parts = []
+        for name in ("Δacc", "Δhalluc", "ΔF"):
+            point, ci = row[name]
+            fmt = (lambda x: f"{x:+.0%}") if name != "ΔF" else (lambda x: f"{x:+.2f}")
+            citxt = (f"[{fmt(ci[0])},{fmt(ci[1])}]" if ci else "")
+            sig = "" if (ci and ci[0] <= 0 <= ci[1]) else "*"   # * = CI excludes 0
+            parts.append(f"{name}={fmt(point)}{citxt}{sig}")
+        print(f"  {row['condition']:<12} " + "  ".join(parts))
 
 
 def main() -> None:
@@ -444,7 +561,7 @@ def main() -> None:
     ap.add_argument("--deterministic", action="store_true",
                     help="use the fast regex 3-way grader (a FLOOR) instead of the default LLM judge")
     ap.add_argument("--benchmarks", nargs="+", default=None,
-                    choices=["gsm8k", "truthfulqa", "simpleqa"],
+                    choices=["gsm8k", "truthfulqa", "simpleqa", "musique"],
                     help="ground the eval in real benchmark datasets instead of the built-in TASKS")
     ap.add_argument("--n", type=int, default=20, help="sample size per benchmark (with --benchmarks)")
     args = ap.parse_args()
@@ -481,6 +598,7 @@ def main() -> None:
         per_condition[cond] = aggregate(cond, tasks, report)
 
     print_report(per_condition)
+    print_deltas(per_condition)
 
 
 if __name__ == "__main__":
