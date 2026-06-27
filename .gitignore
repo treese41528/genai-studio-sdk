@@ -9,5 +9,8 @@ eval_run_*.jsonl
 # Regenerable benchmark run artifacts + local probe logs (keep results JSON)
 benchmarks/_traces/
 benchmarks/_results/*.log
+benchmarks/_results/*.txt
 benchmarks/_results/logprobs_probe*
 benchmarks/_results/partial/
+# Downloaded benchmark datasets (fetched on demand; not vendored — answer keys/licences)
+benchmarks/_data/benchmarks/

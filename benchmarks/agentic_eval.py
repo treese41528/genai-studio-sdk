@@ -11,9 +11,11 @@ Runs each task k times per CONDITION and reports, beyond pass^k:
 - **grnd%** — of the CORRECT answers, the share that actually called a tool
   (distinguishes genuine grounding from lucky parametric recall) + token cost.
 
-Grading is by an LLM judge by default (SimpleQA-style, robust to phrasing); pass
-``--deterministic`` for a fast regex floor (documented limitations — it heuristically
-matches "any number near the gold in the final span", so trust ``--judge`` numbers).
+Grading is HYBRID by default: deterministic where it's reliable (exact-numeric /
+gold-present-verbatim) and an LLM judge only where it's needed (free-form answers
+phrased differently). A gateway-model judge mis-grades exact numbers ('$100' vs gold
+'100' -> INCORRECT), so numeric golds stay deterministic. ``--deterministic`` forces
+the offline regex/numeric floor (reliable for numbers, weak on free-form refusals).
 
 Sample size is small (a handful of tasks per category, k runs each): treat
 condition differences as **directional**, not statistically significant — expand
@@ -33,6 +35,16 @@ verifier sub-agent) — so you can SEE whether grounding cuts hallucination.
 
     python benchmarks/agentic_eval.py --conditions baseline grounded --k 3 \
         --categories compute factual false_premise --model qwen2.5:72b
+
+Or ground it in REAL benchmarks (downloaded + cached on first use; see
+``real_benchmarks.py``) — these are hard enough that grounding can actually move
+the hallucination rate:
+
+    python benchmarks/agentic_eval.py --benchmarks simpleqa gsm8k --n 30 \
+        --conditions baseline grounded --k 3
+
+The built-in TASKS remain useful for the ``false_premise`` category (which no
+public benchmark covers as directly), and as a fast offline smoke set.
 
 Live, gateway-bound (~20 RPM, resumable via the eval harness's trace dir).
 """
@@ -223,25 +235,27 @@ def classify(task: Task, answer: str) -> str:
     return "incorrect"
 
 
-_JUDGE_PROMPT = """Grade an ANSWER to a question, SimpleQA-style. Reply with ONE token only:
-- CORRECT: gives the gold answer; OR for a false-premise question, correctly refuses / says the
-  premise is false / says it cannot be answered.
-- NOT_ATTEMPTED: declines, says it doesn't know, or hedges without committing (and the question is
-  answerable).
-- INCORRECT: commits to a wrong answer (a confident hallucination); OR for a false-premise question,
+_JUDGE_PROMPT = """Grade an ANSWER against the GOLD, SimpleQA-style. Compare ONLY to the gold — do
+NOT re-derive or re-solve the question yourself. Match the SEMANTIC content and ignore units, $/%/comma
+formatting, capitalisation, spelling, and surrounding words: gold '100' == 'John is missing $100'; gold
+'Au' == 'the symbol is Au'; a last name matches a full name. Reply with ONE token only:
+- CORRECT: states the gold answer in any phrasing; OR for a false-premise question, correctly refuses /
+  says the premise is false / says it cannot be answered.
+- NOT_ATTEMPTED: declines, says it doesn't know, or hedges without committing (answerable question).
+- INCORRECT: commits to an answer that CONFLICTS with the gold; OR for a false-premise question,
   invents an answer instead of refusing.
 
 Question: {q}
-Gold / notes: {gold}
+GOLD answer: {gold}
 This is a FALSE-PREMISE question (correct = refuse): {refuse}
-Answer: {ans}
+ANSWER to grade: {ans}
 
 Reply with ONLY: CORRECT, INCORRECT, or NOT_ATTEMPTED."""
 
 
 def classify_judge(client, task: Task, answer: str, *, model=None) -> str:
-    """LLM 3-way grade (more robust than the regex on unusual phrasings); falls back
-    to the deterministic rule on any judge error."""
+    """LLM 3-way grade (robust to phrasing on free-form answers); falls back to the
+    deterministic rule on any judge error."""
     from genai_studio.agents import Message
     prompt = _JUDGE_PROMPT.format(q=task.prompt, gold=task.note, refuse=task.must_refuse,
                                   ans=(answer or "(no answer)"))
@@ -253,6 +267,19 @@ def classify_judge(client, task: Task, answer: str, *, model=None) -> str:
     except Exception:
         pass
     return classify(task, answer)
+
+
+def classify_hybrid(client, task: Task, answer: str, *, model=None) -> str:
+    """Default grader: deterministic where it is RELIABLE (exact numeric / gold present
+    verbatim), the LLM judge only where it is NEEDED (free-form answers phrased
+    differently). A gateway-model judge was observed to mis-grade correct exact-numeric
+    answers ('$100' vs gold '100' -> INCORRECT), so numeric golds stay deterministic."""
+    det = classify(task, answer)
+    if det == "correct":
+        return "correct"                      # gold present verbatim — trustworthy, skip the judge
+    if task.num is not None or task.rng is not None:
+        return det                            # numeric/range: deterministic is authoritative
+    return classify_judge(client, task, answer, model=model)
 
 
 def _verdict_of(run) -> str:
@@ -397,9 +424,8 @@ def print_report(per_condition: dict) -> None:
         print(f"\n{'=' * 78}\ncondition: {cond}\n{'=' * 78}")
         print(f"{'category':<15}{'n':>4}{'acc':>7}{'halluc':>8}{'abstain':>9}"
               f"{'pass^k':>8}{'consist':>9}{'tool%':>7}{'grnd%':>7}{'tok':>7}")
-        for cat in _CATS:
-            if cat not in agg:
-                continue
+        cats = sorted(c for c in agg if c != "ALL") + (["ALL"] if "ALL" in agg else [])
+        for cat in cats:
             m = agg[cat]
             tok = f"{m['mean_tokens']:.0f}" if m["mean_tokens"] else "-"
             grnd = f"{m['grounded']:.0%}" if m["grounded"] is not None else "-"
@@ -417,25 +443,34 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0, help="cap tasks per category (0 = all)")
     ap.add_argument("--deterministic", action="store_true",
                     help="use the fast regex 3-way grader (a FLOOR) instead of the default LLM judge")
+    ap.add_argument("--benchmarks", nargs="+", default=None,
+                    choices=["gsm8k", "truthfulqa", "simpleqa"],
+                    help="ground the eval in real benchmark datasets instead of the built-in TASKS")
+    ap.add_argument("--n", type=int, default=20, help="sample size per benchmark (with --benchmarks)")
     args = ap.parse_args()
 
-    tasks = [t for t in TASKS if t.category in args.categories]
-    if args.limit:
-        seen: dict = defaultdict(int)
-        capped = []
-        for t in tasks:
-            if seen[t.category] < args.limit:
-                capped.append(t); seen[t.category] += 1
-        tasks = capped
+    if args.benchmarks:
+        import real_benchmarks as rb
+        tasks = [t for b in args.benchmarks for t in rb.LOADERS[b](args.n)]
+    else:
+        tasks = [t for t in TASKS if t.category in args.categories]
+        if args.limit:
+            seen: dict = defaultdict(int)
+            capped = []
+            for t in tasks:
+                if seen[t.category] < args.limit:
+                    capped.append(t)
+                    seen[t.category] += 1
+            tasks = capped
 
     client = make_client(model=args.model)
     model = args.model
-    use_judge = not args.deterministic
-    classify_fn = (lambda task, ans: classify_judge(client, task, ans, model=model)) \
-        if use_judge else classify
+    classify_fn = classify if args.deterministic else \
+        (lambda task, ans: classify_hybrid(client, task, ans, model=model))
     os.makedirs(TRACE_ROOT, exist_ok=True)
     print(f"tasks={len(tasks)}  conditions={args.conditions}  k={args.k}  "
-          f"model={args.model or 'default'}  grader={'llm-judge' if use_judge else 'deterministic'}")
+          f"model={args.model or 'default'}  "
+          f"grader={'deterministic' if args.deterministic else 'hybrid(det+judge)'}")
 
     per_condition = {}
     for cond in args.conditions:
