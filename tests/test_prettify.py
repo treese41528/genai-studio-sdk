@@ -26,6 +26,32 @@ def test_latex_big_operators_as_readable_ranges():
     assert latex_to_unicode(r"$\int_{-\infty}^{\infty} e^{-x^2}\,dx$") == "∫[-∞..∞] e^(-x²) dx"
 
 
+def test_latex_accents_binom_setops():
+    assert latex_to_unicode(r"$\vec{v} + \hat{x}$") == "v⃗ + x̂"
+    assert latex_to_unicode(r"$\bar{X}$") == "X̄"
+    assert latex_to_unicode(r"$\binom{n}{k}$") == "C(n, k)"
+    assert latex_to_unicode(r"$A \cup B \subseteq \mathbb{R}$") == "A ∪ B ⊆ ℝ"
+    assert latex_to_unicode(r"$x \equiv 3 \pmod{7}$") == "x ≡ 3 (mod 7)"
+
+
+def test_latex_transpose_floor_angle_cfrac():
+    assert latex_to_unicode(r"$\vec{x}^{\top}$") == "x⃗ᵀ"                    # transpose superscript
+    assert latex_to_unicode(r"$\lfloor x \rfloor$") == "⌊x⌋"                 # floor, tightened
+    assert latex_to_unicode(r"$\langle u,v \rangle$") == "⟨u,v⟩"            # angle brackets
+    assert latex_to_unicode(r"$\cfrac{1}{1 + \cfrac{1}{x}}$") == "1/(1 + 1/x)"  # nested continued fraction
+    assert latex_to_unicode(r"$\bigl(a\bigr)$") == "(a)"                    # sizing delimiters stripped
+
+
+def test_latex_matrix_grid():
+    out = latex_to_unicode(r"\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}")
+    assert "[ 1  2 ]" in out and "[ 3  4 ]" in out
+
+
+def test_latex_cases_block():
+    out = latex_to_unicode(r"\begin{cases} a & x>0 \\ b & x<0 \end{cases}")
+    assert "⎧ a" in out and "⎩ b" in out and "if x>0" in out
+
+
 def test_markdown_plain_when_no_color():
     out = markdown_to_ansi("# Title\n**bold** `code`\n- one", color=False)
     assert "Title" in out and "bold" in out and "\033[" not in out and "• one" in out

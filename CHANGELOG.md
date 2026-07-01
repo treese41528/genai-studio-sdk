@@ -33,12 +33,14 @@ Code / Codex except MCP.
   an interactive prover (Lean/Isabelle) — deferred.
 
 ### Added — terminal math rendering
-- **`prettify`** (`repl/prettify.py`): the REPL now renders **LaTeX → Unicode** (`\frac{\pi^2}{4}` →
-  `π²/4`, `\sqrt{3}` → `√3`, `\boxed{5}` → `【 5 】`, Greek/operators/super-/sub-scripts) and light
-  **markdown → ANSI** (headers, bold, inline code, bullets) instead of dumping raw `$\boxed{…}$`.
-  Big-operator limits render as readable ranges — `\sum_{i=1}^{n}` → `∑[i=1..n]`, `\int_0^1` →
-  `∫[0..1]` — rather than cramped subscripts, and thin-spaces (`x\,dx` → `x dx`) are preserved.
-  Built-in, no dependency, fails open to raw text; on by default, **`/pretty [on|off]`** toggles it.
+- **`prettify`** (`repl/prettify.py`): the REPL now renders **LaTeX → Unicode** instead of dumping raw
+  `$\boxed{…}$`. Handles fractions/roots, Greek + ~120 operators/relations/arrows, blackboard &
+  calligraphic (`ℝ ℤ ℒ`), super-/sub-scripts, **big-operator limits as ranges** (`\sum_{i=1}^{n}` →
+  `∑[i=1..n]`), **combining accents** (`\vec v` → `v⃗`, `\hat x` → `x̂`, `\bar X` → `X̄`), transpose
+  (`A^{\top}` → `Aᵀ`), binomials, floor/ceil/angle brackets, `\pmod`, nested **continued fractions**,
+  sizing delimiters, and multi-line **matrices** (aligned bracketed grids) and **cases** (braced). Plus
+  light **markdown → ANSI** (headers, bold, code, bullets). Validated against an adversarial cross-domain
+  corpus. Built-in, no dependency, fails open to raw text; on by default, **`/pretty [on|off]`** toggles.
 
 ### Added — Lean 4 proving + a competition-math benchmark
 - **`lean_check`** (`tools/lean.py`): the model writes a Lean 4 theorem + proof, the Lean kernel
