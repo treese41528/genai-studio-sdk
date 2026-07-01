@@ -156,10 +156,6 @@ def latex_to_unicode(s: str) -> str:
         s = re.sub(r"\\(?:text|textrm|textbf|textit|mathrm|mathbf|mathit|mathsf|mathtt|operatorname)\*?\{([^{}]*)\}", r"\1", s)
         s = re.sub(r"\\mathbb\{([A-Z])\}", lambda m: _BB.get(m.group(1), m.group(1)), s)
         s = re.sub(r"\\mathcal\{([A-Z])\}", lambda m: _CAL.get(m.group(1), m.group(1)), s)
-        # 4. accents (\vec v, \hat{x}, \overline{AB})
-        s = re.sub(r"\\(hat|widehat|bar|overline|vec|tilde|widetilde|dot|ddot|check|acute|grave|breve|mathring)\{([^{}]*)\}",
-                   lambda m: _accent(m.group(1), m.group(2)), s)
-        s = re.sub(r"\\(hat|bar|vec|tilde|dot|check)\s+(\w)", lambda m: _accent(m.group(1), m.group(2)), s)
         # 5. binomials, mod, escapes
         s = re.sub(r"\\[dt]?binom\{([^{}]*)\}\{([^{}]*)\}", r"C(\1, \2)", s)
         s = re.sub(r"\\pmod\{([^{}]*)\}", r"(mod \1)", s)
@@ -168,6 +164,10 @@ def latex_to_unicode(s: str) -> str:
         # 6. Greek + operators (NOT big operators, handled below)
         s = re.sub(r"\\([A-Za-z]+)",
                    lambda m: _GREEK.get(m.group(1)) or _OPS.get(m.group(1)) or m.group(0), s)
+        # accents AFTER symbol conversion, so \hat{\theta} -> θ̂ (not the literal word)
+        s = re.sub(r"\\(hat|widehat|bar|overline|vec|tilde|widetilde|dot|ddot|check|acute|grave|breve|mathring)\{([^{}]*)\}",
+                   lambda m: _accent(m.group(1), m.group(2)), s)
+        s = re.sub(r"\\(hat|bar|vec|tilde|dot|check)\s+(\S)", lambda m: _accent(m.group(1), m.group(2)), s)
         s = re.sub(r"([_^])\s*([^{\s\\])", r"\1{\2}", s)       # normalise single scripts to braces
         for _ in range(2):
             s = re.sub(_BIGOP_RE, _bigop, s)
@@ -178,7 +178,7 @@ def latex_to_unicode(s: str) -> str:
                        lambda m: f"{_map(m.group(1), _SUP)}√({m.group(2)})", s)
             s = re.sub(r"\\sqrt\{([^{}]*)\}", r"√(\1)", s)
             s = re.sub(r"\\(?:[dtc])?frac\s*\{([^{}]*)\}\{([^{}]*)\}",   # frac/dfrac/tfrac/cfrac
-                       lambda m: f"{_par(m.group(1))}/{_par(m.group(2))}", s)
+                       lambda m: f"{_par(m.group(1))}/{_pardenom(m.group(2))}", s)
             s = re.sub(r"\^\{([^{}]*)\}", lambda m: _script(m.group(1), _SUP, "^"), s)
             s = re.sub(r"_\{([^{}]*)\}", lambda m: _script(m.group(1), _SUB, "_"), s)
         s = s.replace("{", "").replace("}", "").replace("\\", "")
@@ -193,7 +193,11 @@ def latex_to_unicode(s: str) -> str:
         s = re.sub(r"\s*([=≠≤≥≈≡≅→←↔↦⟹⟸⟺±×÷∈∉])\s*", r" \1 ", s)   # pad binary relations/ops
         s = re.sub(r"\x00(\d+)\x00", lambda m: stash[int(m.group(1))], s)
         s = re.sub(r" +([,.;:)])", r"\1", s)                        # no space before punctuation
-        return re.sub(r"(?m)^ (?=[^\s([{❴⎧⎨⎩|‖])", "", s)          # drop spurious leading space
+        s = re.sub(r"(?m)^ (?=[^\s([{❴⎧⎨⎩|‖])", "", s)             # drop spurious leading space
+        # collapse doubled spaces on ordinary lines; a matrix/cases ROW starts with its bracket, so
+        # leaving those lines untouched preserves column alignment while tidying inline math.
+        return "\n".join(ln if re.match(r"^\s*[\[(❴⎧⎨⎩‖]", ln) else re.sub(r"  +", " ", ln)
+                         for ln in s.split("\n"))
     except Exception:
         return s
 
@@ -211,6 +215,15 @@ def _par(x: str) -> str:
         elif depth == 0 and (ch in "+±∓" or (ch == "-" and i > 0 and x[i - 1] not in "+-±∓*/(=,^_ ")):
             return f"({x})"
     return x
+
+
+def _pardenom(x: str) -> str:
+    """Like ``_par`` but also wraps an implicit product denominator (`2a`, `2π`) so `x/2a` can't be
+    misread as `x/2·a`."""
+    x = x.strip()
+    if _par(x) != x:
+        return f"({x})"
+    return f"({x})" if re.match(r"^-?\d+\s*[A-Za-zπ(]", x) else x
 
 
 def markdown_to_ansi(s: str, color: bool = True) -> str:
