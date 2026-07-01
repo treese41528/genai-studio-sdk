@@ -32,6 +32,13 @@ Code / Codex except MCP.
   analysis fall outside z3's fragment (→ UNKNOWN); machine-checked proofs of arbitrary theorems need
   an interactive prover (Lean/Isabelle) — deferred.
 
+### Added — terminal math rendering
+- **`prettify`** (`repl/prettify.py`): the REPL now renders **LaTeX → Unicode** (`\frac{\pi^2}{4}` →
+  `π²/4`, `\sqrt{3}` → `√3`, `\boxed{5}` → `【 5 】`, Greek/operators/super-/sub-scripts) and light
+  **markdown → ANSI** (headers, bold, inline code, bullets) instead of dumping raw `$\boxed{…}$`.
+  Built-in (no dependency, fails open to raw text); uses `pylatexenc` (`[pretty]`) for fuller coverage
+  if installed. On by default; **`/pretty [on|off]`** toggles it.
+
 ### Added — Lean 4 proving + a competition-math benchmark
 - **`lean_check`** (`tools/lean.py`): the model writes a Lean 4 theorem + proof, the Lean kernel
   checks it, and the agent repairs from the compiler's errors — the loop IS the proof-repair loop.

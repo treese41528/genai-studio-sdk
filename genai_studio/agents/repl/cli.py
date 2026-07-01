@@ -111,13 +111,14 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
     registry = build_registry()
     ctx = ReplContext(agent=agent, tools=tools, approval_config=approval_config, recorder=recorder,
                       client=client, cfg=cfg, cwd=cwd, registry=registry, base_system=base_system)
+    ctx.pretty = True                                # LaTeX→Unicode + markdown rendering (/pretty toggles)
     n_custom = load_custom_into(registry, cwd)
 
     if getattr(args, "resume", None):
         resume_cmd(ctx, "" if args.resume == "__pick__" else args.resume)
 
     if getattr(args, "prompt", None):                # one-shot mode
-        ctx.history = _run_turn(agent, args.prompt, ctx.history, recorder, args.prompt)
+        ctx.history = _run_turn(agent, args.prompt, ctx.history, recorder, args.prompt, ctx.pretty)
         recorder.close()
         return 0
 
@@ -143,20 +144,20 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
                     break
                 if res.prompt is None:
                     continue
-                ctx.history = _run_turn(agent, res.prompt, ctx.history, recorder, line)
+                ctx.history = _run_turn(agent, res.prompt, ctx.history, recorder, line, ctx.pretty)
                 continue
-            ctx.history = _run_turn(agent, line, ctx.history, recorder, line)
+            ctx.history = _run_turn(agent, line, ctx.history, recorder, line, ctx.pretty)
     finally:
         recorder.close()
     print("Goodbye.")
     return 0
 
 
-def _run_turn(agent, text, history, recorder=None, raw=None) -> list:
+def _run_turn(agent, text, history, recorder=None, raw=None, pretty=True) -> list:
     n0 = len(history)
     if recorder is not None and raw is not None:
         recorder.write_input(raw)
-    renderer = StreamRenderer()
+    renderer = StreamRenderer(pretty=pretty)
     renderer.start()
     tok = Cancel()
     gen = agent.stream(text, memory=history, cancel=tok)

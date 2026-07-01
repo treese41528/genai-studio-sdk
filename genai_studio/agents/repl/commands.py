@@ -36,6 +36,7 @@ class ReplContext:
     registry: "SlashRegistry"
     history: list = field(default_factory=list)
     base_system: str = ""          # system prompt WITHOUT project memory (so /init can rebuild it)
+    pretty: bool = True            # LaTeX→Unicode + markdown rendering of answers (/pretty toggles)
 
 
 @dataclass
@@ -158,6 +159,14 @@ def _forget(ctx, arg):
     return CommandResult()
 
 
+def _pretty(ctx, arg):
+    """Toggle LaTeX→Unicode + markdown rendering of answers (on by default)."""
+    a = arg.strip().lower()
+    ctx.pretty = (a == "on") if a in ("on", "off") else not getattr(ctx, "pretty", True)
+    print(f"pretty rendering {'ON — LaTeX→Unicode + markdown' if ctx.pretty else 'OFF — raw text'}")
+    return CommandResult()
+
+
 def _plan(ctx, arg):
     """Toggle PLAN MODE — read-only exploration (read/grep/glob + update_plan), no writes/exec."""
     from ..approval import SandboxPolicy
@@ -270,6 +279,7 @@ _BUILTINS = [
     ("memory", "list durable memory facts", _memory, None),
     ("remember", "save a durable fact", _remember, "<text>"),
     ("forget", "forget a fact by id", _forget, "<id>"),
+    ("pretty", "toggle LaTeX/markdown rendering of answers", _pretty, "[on|off]"),
     ("plan", "toggle plan mode (read-only explore + propose)", _plan, None),
     ("approvals", "show or set approval mode", _approvals, "[suggest|auto|full]"),
     ("status", "show session status", _status, None),

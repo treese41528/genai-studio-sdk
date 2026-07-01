@@ -14,6 +14,7 @@ import sys
 
 from ..client import _tool_calls_from_text
 from ..events import Final, StepFinished, TextDelta, ToolCallFinished, ToolCallStarted
+from .prettify import prettify
 
 _DIM, _RED, _RESET = "\033[2m", "\033[31m", "\033[0m"
 
@@ -37,9 +38,10 @@ def _is_toolcall_text(text: str) -> bool:
 
 
 class StreamRenderer:
-    def __init__(self, *, color=None, stream=None):
+    def __init__(self, *, color=None, stream=None, pretty=True):
         self.out = stream or sys.stdout
         self.color = (self.out.isatty() if color is None else color)
+        self.pretty = pretty                # LaTeX→Unicode + light markdown on assistant text
         self._spinner = None
         self._seg: list[str] = []          # assistant text buffered since the last flush
         self._printed = False              # did we print any real assistant text this turn?
@@ -71,9 +73,12 @@ class StreamRenderer:
         self._seg = []
         if not text or _is_toolcall_text(text):
             return
-        self.out.write(text + "\n")
+        self.out.write(self._pretty(text) + "\n")
         self.out.flush()
         self._printed = True
+
+    def _pretty(self, text: str) -> str:
+        return prettify(text, color=self.color) if self.pretty else text
 
     def start(self):
         self._spin("thinking…")
@@ -105,7 +110,7 @@ class StreamRenderer:
             self._flush_text()                     # the final answer (if streamed as text)
             text = (getattr(res, "text", "") or "").strip()
             if not self._printed and text and not _is_toolcall_text(text):
-                self.out.write(text + "\n")        # finish-tool / non-streamed answer
+                self.out.write(self._pretty(text) + "\n")   # finish-tool / non-streamed answer
             stopped = getattr(res, "stopped", "final")
             if stopped and stopped != "final":
                 note = {"cancelled": "(interrupted)", "max_steps": "(stopped: step limit)",

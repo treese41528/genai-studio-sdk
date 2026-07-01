@@ -50,8 +50,10 @@ math = ["sympy>=1.12"]
 # Sound theorem proving over arithmetic (prove / solve_constraints, and z3-backed verify_math).
 # ~30-50 MB MIT wheel; off by default.
 smt = ["z3-solver>=4.12"]
+# Fuller LaTeX→Unicode coverage for the REPL's math rendering (a built-in converter works without it).
+pretty = ["pylatexenc>=2.10"]
 test = ["pytest>=7", "pydantic>=1.10", "pyyaml", "sympy>=1.12", "z3-solver>=4.12"]
-dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,math,smt,test]", "pytest-cov"]
+dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,math,smt,pretty,test]", "pytest-cov"]
 
 [project.urls]
 Homepage = "https://github.com/treese41528/genai-studio-sdk"
