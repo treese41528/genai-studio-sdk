@@ -94,8 +94,11 @@ def _accent(name, text):
     return "".join(ch + _ACCENT[name] for ch in text) if text else ""
 
 
+_ROW = r"\\\\\s*(?:\[[^\]]*\])?"                                # row break, ignoring \\[4pt] spacing args
+
+
 def _matrix(env, body):
-    rows = [r for r in re.split(r"\\\\", body) if r.strip()]
+    rows = [r for r in re.split(_ROW, body) if r.strip()]
     grid = [[latex_to_unicode(c.strip()) for c in row.split("&")] for row in rows]
     ncol = max((len(r) for r in grid), default=0)
     width = [max((len(g[c]) for g in grid if c < len(g)), default=0) for c in range(ncol)]
@@ -108,7 +111,7 @@ def _matrix(env, body):
 
 
 def _cases(body):
-    rows = [r for r in re.split(r"\\\\", body) if r.strip()]
+    rows = [r for r in re.split(_ROW, body) if r.strip()]
     cells = [[latex_to_unicode(p.strip()) for p in row.split("&")] for row in rows]
     w0 = max((len(c[0]) for c in cells if c), default=0)
     n = len(cells)
@@ -143,7 +146,7 @@ def latex_to_unicode(s: str) -> str:
         s = re.sub(r"\\begingroup|\\endgroup", "", s)
         for d in ("$$", "$", "\\(", "\\)", "\\[", "\\]", "\\|"):
             s = s.replace(d, "‖" if d == "\\|" else "")
-        s = re.sub(r"\\\\\s*", "\n", s)                        # row break outside envs -> newline
+        s = re.sub(r"\\\\\s*(?:\[[^\]]*\])?\s*", "\n", s)      # row break (+ optional \\[4pt]) -> newline
         s = re.sub(r"\^\{?\\circ\}?", "°", s)                  # degrees
         s = re.sub(r"\^\s*\{?\s*\\?(?:top|intercal)\s*\}?", "ᵀ", s)   # transpose superscript -> ᵀ
         s = re.sub(r"\^\s*\{?\s*\\?dagger\s*\}?", "†", s)      # adjoint/dagger superscript
@@ -223,7 +226,7 @@ def _pardenom(x: str) -> str:
     x = x.strip()
     if _par(x) != x:
         return f"({x})"
-    return f"({x})" if re.match(r"^-?\d+\s*[A-Za-zπ(]", x) else x
+    return f"({x})" if re.match(r"^-?\d+\s*[A-Za-zα-ωΑ-Ωπ(]", x) else x
 
 
 def markdown_to_ansi(s: str, color: bool = True) -> str:
