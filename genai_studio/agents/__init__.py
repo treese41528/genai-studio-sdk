@@ -71,6 +71,7 @@ from .guard import (
     modify,
 )
 from .orchestrate import DELEGATION_GUIDE, EFFORT_PRESETS, effort_policy, pipeline, supervisor
+from .fanout import make_fanout_tool, parallel_agents
 from .team import Team
 from .verify import VERIFY_PROMPT, verifier
 from .panel import (Critic, CriticVote, Verdict, critic_gate, critic_panel, panel_tool,
@@ -120,6 +121,7 @@ __all__ = [
     # multi-agent: orchestration topologies + grounded verifier
     "supervisor", "pipeline", "DELEGATION_GUIDE", "Team",
     "effort_policy", "EFFORT_PRESETS",
+    "parallel_agents", "make_fanout_tool",
     "verifier", "VERIFY_PROMPT",
     # verification (adversarial critic panel + fail-closed gate)
     "critic_panel", "panel_tool", "critic_gate", "Verdict", "CriticVote", "Critic",

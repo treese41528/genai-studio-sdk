@@ -2,6 +2,36 @@
 
 All notable changes to `genai-studio-sdk`. This project follows [semantic versioning](https://semver.org).
 
+## [1.4.0] — 2026-07-01
+
+Capability + grounding round-out (all additive). Closes the coding/agentic-harness gaps vs Claude
+Code / Codex except MCP.
+
+### Added — codebase understanding, planning, orchestration
+- **Codebase search:** `grep` (ripgrep fast-path + pure-Python fallback) and `glob`, workspace-
+  confined, in all profiles — the agent can now *explore* a repo, not just read known paths.
+- **Planning:** an `update_plan` working-memory task list + a **`/plan`** REPL command (read-only
+  plan mode: explore → propose → execute).
+- **Dynamic + parallel fan-out:** `parallel_agents` + a model-facing `fan_out(subtasks)` tool — the
+  model decides how many independent subtasks to spawn; they run in parallel, paced by the shared
+  rate-limiter. Wired into the REPL with read-only workers.
+- **Coding edits + processes:** `apply_patch` (multi-hunk atomic SEARCH/REPLACE edits) and
+  `run_background`/`check_job` (long-running processes: dev servers, builds, long tests).
+
+### Added — exact-math grounding (`[math]`) + sound proving (`[smt]`)
+- `verify_math` (decide a claim TRUE/FALSE with a CAS — self-verification), `symbolic_math` (exact
+  solve/simplify/factor/expand/diff/integrate/limit/series/evaluate), and `matrix_op` (exact linear
+  algebra over rationals). sympy-backed, lazy-imported, safe (no `exec`), read-only. Wired into all
+  profiles + `data_analyst`, with a system-prompt nudge to compute/verify rather than reason numbers
+  in-head.
+- **Sound theorem proving** (`[smt]`, z3): `prove` establishes a universally-quantified (in)equality
+  for ALL values (negation UNSAT) or returns a concrete counterexample; `solve_constraints` finds a
+  witness or proves infeasibility. `verify_math` now uses z3 when sympy is inconclusive, so it
+  **proves** claims it used to return UNKNOWN for (e.g. `x²+y² ≥ 2xy`), and labels a numeric fallback
+  explicitly as a check, **not** a proof. Honest limit: unbounded induction / transcendentals /
+  analysis fall outside z3's fragment (→ UNKNOWN); machine-checked proofs of arbitrary theorems need
+  an interactive prover (Lean/Isabelle) — deferred.
+
 ## [1.3.0] — 2026-07-01
 
 The **agent framework** (`genai_studio.agents`) and a set of Claude-Code-style **meta-capabilities**.

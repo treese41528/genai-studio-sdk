@@ -42,13 +42,25 @@ def build_tools(profile: str = "general", *, workspace_root=None,
     except Exception:
         pass
 
+    from .tools.plan import make_plan_tool
+    from .tools.search import make_search_tools
+    from .tools.smt import prove, solve_constraints
+    from .tools.symbolic import matrix_op, symbolic_math, verify_math
     file_tools = make_file_tools(ws)                # [read_file, write_file, edit_file]
     read_file = file_tools[0]
+    search = make_search_tools(ws)                  # [grep, glob] — read-only codebase exploration
+    plan = [make_plan_tool()]                       # [update_plan] — working-memory task list
+    # exact CAS grounding ([math]) + sound theorem proving over arithmetic ([smt]); lazy-imported
+    math = [verify_math, symbolic_math, matrix_op, prove, solve_constraints]
     coding = list(file_tools)
+    from .tools.patch import make_patch_tool
+    coding.append(make_patch_tool(ws))              # apply_patch — multi-hunk atomic edits
     try:
+        from .tools.background import make_background_tools
         from .tools.shell import make_run_shell
         coding.append(make_run_shell(ws))
-    except RuntimeError:                            # non-Unix
+        coding += make_background_tools(ws)         # [run_background, check_job] — long-running procs
+    except RuntimeError:                            # non-Unix (shell + background)
         pass
 
     data: list = []
@@ -62,11 +74,11 @@ def build_tools(profile: str = "general", *, workspace_root=None,
             pass
 
     if profile == "research":
-        tools = research + [read_file]
+        tools = research + [read_file] + search + plan + math   # read + explore (no writes)
     elif profile == "coding":
-        tools = research + coding + data
+        tools = research + coding + search + data + plan + math
     else:                                           # general
-        tools = research + coding + data
+        tools = research + coding + search + data + plan + math
 
     seen: set = set()
     deduped = []

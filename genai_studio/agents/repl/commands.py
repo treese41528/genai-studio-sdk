@@ -158,6 +158,25 @@ def _forget(ctx, arg):
     return CommandResult()
 
 
+def _plan(ctx, arg):
+    """Toggle PLAN MODE — read-only exploration (read/grep/glob + update_plan), no writes/exec."""
+    from ..approval import SandboxPolicy
+    cfg = ctx.approval_config
+    if cfg is None:
+        print("(approval config unavailable — plan mode needs the built-in approval engine)")
+        return CommandResult()
+    if cfg.sandbox != SandboxPolicy.read_only:
+        ctx.plan_prev_sandbox = cfg.sandbox
+        cfg.set_policy(sandbox=SandboxPolicy.read_only)
+        print("PLAN MODE on — read-only. Explore (read/grep/glob), lay out steps with update_plan, "
+              "then run /plan again to execute the plan.")
+    else:
+        prev = getattr(ctx, "plan_prev_sandbox", SandboxPolicy.workspace_write)
+        cfg.set_policy(sandbox=prev)
+        print(f"PLAN MODE off — sandbox restored to {prev.value}; writes/exec enabled.")
+    return CommandResult()
+
+
 def _approvals(ctx, arg):
     cfg = ctx.approval_config
     if cfg is None:
@@ -251,6 +270,7 @@ _BUILTINS = [
     ("memory", "list durable memory facts", _memory, None),
     ("remember", "save a durable fact", _remember, "<text>"),
     ("forget", "forget a fact by id", _forget, "<id>"),
+    ("plan", "toggle plan mode (read-only explore + propose)", _plan, None),
     ("approvals", "show or set approval mode", _approvals, "[suggest|auto|full]"),
     ("status", "show session status", _status, None),
     ("init", "write a starter CLAUDE.md and load it", _init, None),

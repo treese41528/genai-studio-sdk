@@ -46,11 +46,16 @@ READ_ONLY_TOOLS = frozenset({
     "read_file", "web_search", "wikipedia_search", "calculator", "arxiv_search",
     "openalex_search", "http_get", "fetch_json", "sql_query", "describe_data",
     "load_table", "load_dataset", "final_answer", "finish",
+    "grep", "glob",                                 # read-only codebase search
+    "update_plan",                                  # working-memory task list (no state change)
+    "verify_math", "symbolic_math", "matrix_op",    # exact-math grounding (pure computation)
+    "prove", "solve_constraints",                   # sound theorem proving (SMT, pure reasoning)
+    "check_job",                                    # poll a background job's status/output
     # read-only meta-tools (load instructions / discover tools / recall facts — no state change)
     "use_skill", "search_tools", "recall_memory",
 })
 STATE_CHANGING_TOOLS = frozenset({
-    "write_file", "edit_file", "run_shell", "python_exec", "r_exec",
+    "write_file", "edit_file", "apply_patch", "run_shell", "run_background", "python_exec", "r_exec",
 })
 
 _ASK = Decision("ask")        # internal sentinel — NEVER returned to the Agent (guard converts it)
@@ -175,7 +180,7 @@ def assess(call, config: ApprovalConfig) -> Decision:
         return _ASK                           # unknown tool -> prompt, never silently allow
 
     sb, mode = config.sandbox, config.mode
-    is_write = name in ("write_file", "edit_file")
+    is_write = name in ("write_file", "edit_file", "apply_patch")   # path-confined file writes
 
     # sandbox capability ceiling (what is POSSIBLE) ---------------------------------
     if sb == SandboxPolicy.read_only:

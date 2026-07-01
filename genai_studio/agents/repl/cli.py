@@ -27,9 +27,13 @@ except ImportError:                      # not available on some platforms (e.g.
 
 BASE_SYSTEM = (
     "You are an interactive coding and research assistant running in a terminal. Use the "
-    "available tools to read files, run shell commands, search the web, and compute. Work "
-    "step by step and prefer reading before writing. When you have the answer, call "
-    "final_answer (or finish) with a concise result. Keep replies brief and to the point."
+    "available tools to read files, search the codebase (grep/glob), run shell commands, search "
+    "the web, and compute. Work step by step and prefer reading before writing; on a multi-step "
+    "task, lay out a plan with update_plan and keep it current. For any non-trivial arithmetic, "
+    "algebra, calculus, or matrix work, COMPUTE with symbolic_math/matrix_op and CHECK results with "
+    "verify_math — never do math in your head; to PROVE a claim holds for all values, use prove (a "
+    "sound solver). When you have the answer, call final_answer (or finish) with a concise result. "
+    "Keep replies brief and to the point."
 )
 
 
@@ -86,6 +90,15 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
     tools, cap_blocks, tool_search, n_skills = wire_capabilities(
         tools, cwd=cwd, client=client, model=model, memory_dir=cfg.memory_dir,
         skills=True, memory=True, defer=False, shared_guards=[approval_guard], studio=ai)
+
+    # Dynamic parallel fan-out: workers get the READ-ONLY tools (safe concurrent explore/research;
+    # the shared client's rate-limiter paces them). Excludes the meta-tools to avoid nesting.
+    from ..approval import READ_ONLY_TOOLS
+    from ..fanout import make_fanout_tool
+    _meta = {"use_skill", "search_tools", "recall_memory", "update_plan"}
+    worker_tools = [t for t in tools if t.name in READ_ONLY_TOOLS and t.name not in _meta]
+    tools = [*tools, make_fanout_tool(client, model=model, worker_tools=worker_tools, max_agents=5)]
+
     mem_block = ("# Project memory (CLAUDE.md / AGENTS.md)\n" + mem_text.strip()
                  if (mem_text or "").strip() else "")
     # priority order: base -> CLAUDE.md -> recalled facts -> skills catalog

@@ -36,10 +36,13 @@ def data_analyst(client, *, model: str = "qwen2.5:72b", **kw) -> Agent:
     from .tools.python_exec import make_python_exec
     from .tools.stats import hypothesis_test
 
+    from ..tools.symbolic import matrix_op, symbolic_math, verify_math
+
     namespace: dict = {}
     tools = [make_python_exec(namespace), make_load_dataset(namespace),
              make_load_table(namespace), describe_data,
-             fit_model, hypothesis_test, plot, calculator, final_answer]
+             fit_model, hypothesis_test, plot, calculator,
+             verify_math, symbolic_math, matrix_op, final_answer]
     return Agent(client=client, model=model, tools=tools, system=DATA_ANALYST_SYSTEM, **kw)
 
 

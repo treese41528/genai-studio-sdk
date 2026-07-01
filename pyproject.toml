@@ -44,8 +44,14 @@ datascience = [
 grounding = ["datacommons-client>=2.0"]
 # Knowledge authoring: nicer OKF frontmatter parsing (a stdlib fallback works without it).
 knowledge = ["pyyaml"]
-test = ["pytest>=7", "pydantic>=1.10", "pyyaml"]
-dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,test]", "pytest-cov"]
+# Exact-math grounding (verify_math / symbolic_math / matrix_op). Pure-Python CAS; mpmath rides
+# along transitively. sympy is also pulled by [datascience] via scipy/statsmodels.
+math = ["sympy>=1.12"]
+# Sound theorem proving over arithmetic (prove / solve_constraints, and z3-backed verify_math).
+# ~30-50 MB MIT wheel; off by default.
+smt = ["z3-solver>=4.12"]
+test = ["pytest>=7", "pydantic>=1.10", "pyyaml", "sympy>=1.12", "z3-solver>=4.12"]
+dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,math,smt,test]", "pytest-cov"]
 
 [project.urls]
 Homepage = "https://github.com/treese41528/genai-studio-sdk"
