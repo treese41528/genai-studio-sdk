@@ -363,7 +363,31 @@ export GENAI_STUDIO_API_KEY=...; export GENAI_STUDIO_RPM=20
 python benchmarks/math_eval.py --model qwen2.5:72b --n 60 --conditions bare,grounded
 ```
 
-The exact-math tools are strongest on Levels 3–5 (algebra/calculus/linear-algebra), where the model's
-in-head arithmetic slips most; on easy word-problem levels the lift is smaller. For **formal proof**
-(not answer-matching), `examples/18_lean_prove.py` runs the Lean 4 kernel-checked write→check→repair
-loop.
+**Finding (n=63 stratified, qwen2.5:72b):** bare ≈ grounded (**46% vs 44%, no subject lift**). This is
+the literature-predicted result — tool grounding fixes *computation*, but a strong 72B fails MATH on
+*setup/insight*, not arithmetic, and forced tool use even hurts easy items (see
+`../../genai-studio-math-grounding-litreview.md`). Two lessons: (1) don't use tools as an inline
+*solver*; the gains come from tools as a *verifier* over samples; (2) `prove`/`lean_check` make
+proofs, which an answer-matching benchmark can't credit.
+
+### CAS-verified self-consistency (`math_selfconsist.py`)
+
+Per Tao's division of labour (**LLMs generate, formal tools verify**) and PROVE (arXiv:2410.12608),
+this is the integration style that actually lifts accuracy — three arms:
+
+- **bare@1** — one greedy solution.
+- **maj@k** — k sampled solutions, majority-vote (self-consistency; the honest baseline).
+- **cas_verified** — same k samples; a CAS pass (`symbolic_math`/`verify_math`/`prove`) verifies each
+  distinct candidate answer and discards the refuted ones; majority-vote the survivors.
+
+It also structurally avoids the tool-call spin/leak (tools score finished answers instead of steering
+the loop). A hard per-sample wall-clock guard + tight request timeout keep a dropped gateway response
+from stalling the run. Reproduce:
+
+```bash
+export GENAI_STUDIO_API_KEY=...; export GENAI_STUDIO_RPM=20
+python benchmarks/math_selfconsist.py --model qwen2.5:72b --n 40 --k 8 --stratify subject
+```
+
+For **formal proof** (not answer-matching), `examples/18_lean_prove.py` runs the Lean 4 kernel-checked
+write→check→repair loop.
