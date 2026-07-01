@@ -344,3 +344,26 @@ python benchmarks/agentic_eval.py --benchmarks simpleqa gsm8k musique --n 60 --k
   --conditions grounded --model qwen2.5:72b \
   --judge-pool gpt-oss:120b llama3.3:70b llama4:latest qwen2.5:72b --seed 0
 ```
+
+## Math grounding — MATH-500 (`math_eval.py`)
+
+Does giving a non-frontier model the **exact-math tools** (`symbolic_math` / `verify_math` /
+`matrix_op` / `prove` / `solve_constraints`) reduce math hallucination? `math_eval.py` runs
+[MATH-500](https://huggingface.co/datasets/HuggingFaceH4/MATH-500) — 500 competition problems
+(algebra → number theory → precalc, 5 difficulty levels) — in two conditions and reports the **lift**:
+
+- **bare** — the model reasons and boxes an answer (no tools). The baseline.
+- **grounded** — the agent has the math tools and is told to compute/verify with them.
+
+Answers are graded by a **sympy equivalence checker** (`math_grade.py`, dogfooding the CAS; ~98%
+self-consistent on the gold), so `\frac12` ≡ `0.5` ≡ `\boxed{\frac{1}{2}}`. Reproduce:
+
+```bash
+export GENAI_STUDIO_API_KEY=...; export GENAI_STUDIO_RPM=20
+python benchmarks/math_eval.py --model qwen2.5:72b --n 60 --conditions bare,grounded
+```
+
+The exact-math tools are strongest on Levels 3–5 (algebra/calculus/linear-algebra), where the model's
+in-head arithmetic slips most; on easy word-problem levels the lift is smaller. For **formal proof**
+(not answer-matching), `examples/18_lean_prove.py` runs the Lean 4 kernel-checked write→check→repair
+loop.

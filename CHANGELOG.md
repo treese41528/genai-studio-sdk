@@ -32,6 +32,18 @@ Code / Codex except MCP.
   analysis fall outside z3's fragment (→ UNKNOWN); machine-checked proofs of arbitrary theorems need
   an interactive prover (Lean/Isabelle) — deferred.
 
+### Added — Lean 4 proving + a competition-math benchmark
+- **`lean_check`** (`tools/lean.py`): the model writes a Lean 4 theorem + proof, the Lean kernel
+  checks it, and the agent repairs from the compiler's errors — the loop IS the proof-repair loop.
+  A wrong proof or a `sorry` is rejected. Auto-added to profiles when the Lean toolchain is present;
+  read-only. A **`lean-prove` skill** teaches the core-tactic discipline (decide / omega / rfl — no
+  mathlib), and `examples/18_lean_prove.py` runs the loop. (Interactive proving is now prototyped
+  rather than merely deferred; mathlib-scale competition proofs remain a heavier, model-gated step.)
+- **MATH-500 benchmark** (`benchmarks/math_eval.py` + `math_grade.py`): 500 competition problems,
+  graded by a sympy answer-equivalence checker (dogfoods the CAS; 98% self-consistent). Runs the
+  agent **bare vs math-grounded** to measure whether the exact-math tools reduce hallucination
+  (the lift). Data is downloaded, not vendored.
+
 ## [1.3.0] — 2026-07-01
 
 The **agent framework** (`genai_studio.agents`) and a set of Claude-Code-style **meta-capabilities**.

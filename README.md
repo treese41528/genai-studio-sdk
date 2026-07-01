@@ -154,7 +154,7 @@ from genai_studio.agents import assemble_agent, critic_panel, ToolSearch
 | **General** (core, `genai_studio.agents.tools`) | `final_answer`/`finish`, `calculator`, `web_search`, `wikipedia_search` |
 | **Codebase** (workspace-confined) | `read_file`/`write_file`/`edit_file`, `apply_patch` (multi-hunk atomic), `grep`/`glob` (search + explore), `run_shell`, `run_background`/`check_job` |
 | **Planning** | `update_plan` (working-memory task list) + `/plan` read-only plan mode |
-| **Math** (`[math]` CAS · `[smt]` prover) | `verify_math` (self-verify a claim), `symbolic_math` (solve/simplify/calculus), `matrix_op` (exact linear algebra), `prove`/`solve_constraints` (sound z3 proving — proves ∀ or returns a counterexample) |
+| **Math** (`[math]` CAS · `[smt]` z3 · Lean) | `verify_math` (self-verify a claim), `symbolic_math` (solve/simplify/calculus), `matrix_op` (exact linear algebra), `prove`/`solve_constraints` (sound z3 proving — ∀ or a counterexample), `lean_check` (kernel-checked Lean 4 proofs, when the toolchain is present) |
 | **Web/academic** (keyless, httpx) | `arxiv_search`, `openalex_search`, `http_get`, `fetch_json` (SSRF-guarded) |
 | **Grounding** | `make_kb_search_tool` (RAG), `make_datacommons_tool` (`[grounding]`) |
 | **Knowledge** | OKF bundle loader (`agents/knowledge/okf.py`, `[knowledge]`) |

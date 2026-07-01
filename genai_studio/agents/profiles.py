@@ -52,6 +52,9 @@ def build_tools(profile: str = "general", *, workspace_root=None,
     plan = [make_plan_tool()]                       # [update_plan] — working-memory task list
     # exact CAS grounding ([math]) + sound theorem proving over arithmetic ([smt]); lazy-imported
     math = [verify_math, symbolic_math, matrix_op, prove, solve_constraints]
+    from .tools.lean import lean_available, make_lean_check
+    if lean_available():                            # kernel-checked proving (only if Lean 4 present)
+        math = math + [make_lean_check()]
     coding = list(file_tools)
     from .tools.patch import make_patch_tool
     coding.append(make_patch_tool(ws))              # apply_patch — multi-hunk atomic edits

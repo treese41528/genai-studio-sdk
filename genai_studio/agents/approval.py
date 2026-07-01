@@ -50,6 +50,7 @@ READ_ONLY_TOOLS = frozenset({
     "update_plan",                                  # working-memory task list (no state change)
     "verify_math", "symbolic_math", "matrix_op",    # exact-math grounding (pure computation)
     "prove", "solve_constraints",                   # sound theorem proving (SMT, pure reasoning)
+    "lean_check",                                   # kernel-checked proof verification (pure)
     "check_job",                                    # poll a background job's status/output
     # read-only meta-tools (load instructions / discover tools / recall facts — no state change)
     "use_skill", "search_tools", "recall_memory",
