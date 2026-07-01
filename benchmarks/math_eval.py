@@ -39,7 +39,7 @@ GROUNDED_SYSTEM = ("You are a careful mathematician with exact-math tools. COMPU
                    "answer in \\boxed{...}.")
 
 
-def _load(n: int, seed: int) -> list:
+def _load(n: int, seed: int, stratify: str | None = None) -> list:
     if not os.path.exists(_CACHE):
         os.makedirs(os.path.dirname(_CACHE), exist_ok=True)
         with httpx.Client(timeout=60, follow_redirects=True) as c:
@@ -47,7 +47,21 @@ def _load(n: int, seed: int) -> list:
     rows = [json.loads(ln) for ln in open(_CACHE) if ln.strip()]
     import random
     random.Random(seed).shuffle(rows)
-    return rows[:n]
+    if not stratify:
+        return rows[:n]
+    from collections import defaultdict                        # balanced round-robin across classes
+    buckets = defaultdict(list)
+    for r in rows:
+        buckets[r.get(stratify, "?")].append(r)
+    keys = sorted(buckets)
+    out: list = []
+    i = 0
+    while len(out) < n and any(buckets[k] for k in keys):
+        k = keys[i % len(keys)]
+        if buckets[k]:
+            out.append(buckets[k].pop())
+        i += 1
+    return out[:n]
 
 
 def _grounded_tools():
@@ -79,41 +93,47 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=40)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--conditions", default="bare,grounded")
+    ap.add_argument("--stratify", default=None, help="balance the sample by a field, e.g. 'subject'")
     args = ap.parse_args()
 
     client = make_client(model=args.model)
     model = args.model or DEFAULT_MODEL
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
-    problems = _load(args.n, args.seed)
-    print(f"MATH-500 — model={model}  n={len(problems)}  conditions={conditions}\n")
+    problems = _load(args.n, args.seed, stratify=args.stratify)
+    strat = f"  stratify={args.stratify}" if args.stratify else ""
+    print(f"MATH-500 — model={model}  n={len(problems)}  conditions={conditions}{strat}\n")
 
-    tally = {c: {"correct": 0, "by_level": {}} for c in conditions}
+    def _fresh():
+        return {"correct": 0, "by_level": {}, "by_subject": {}}
+    tally = {c: _fresh() for c in conditions}
     for i, r in enumerate(problems, 1):
-        gold, level = r["answer"], r.get("level", 0)
-        line = f"[{i:>3}/{len(problems)}] L{level} {r.get('subject','')[:14]:14}"
+        gold, level, subj = r["answer"], r.get("level", 0), r.get("subject", "?")
+        line = f"[{i:>3}/{len(problems)}] L{level} {subj[:16]:16}"
         for c in conditions:
             out = _run(r["problem"], client, model, c)
             ok = is_equiv(out, gold)
             tally[c]["correct"] += ok
-            lv = tally[c]["by_level"].setdefault(level, [0, 0])
-            lv[0] += ok
-            lv[1] += 1
-            line += f"  {c}={'✓' if ok else '·'}({extract_answer(out)[:16]})"
+            for key, val in (("by_level", level), ("by_subject", subj)):
+                cell = tally[c][key].setdefault(val, [0, 0])
+                cell[0] += ok
+                cell[1] += 1
+            line += f"  {c}={'✓' if ok else '·'}({extract_answer(out)[:14]})"
         print(line, flush=True)
 
-    print("\n=== RESULTS ===")
     n = len(problems)
+    print("\n=== RESULTS ===")
     for c in conditions:
-        acc = tally[c]["correct"] / n if n else 0
-        print(f"  {c:9}: {tally[c]['correct']}/{n} = {acc:.1%}")
-    if "bare" in tally and "grounded" in tally:
-        lift = (tally["grounded"]["correct"] - tally["bare"]["correct"]) / n
-        print(f"  LIFT (grounded − bare): {lift:+.1%}")
-    print("\n  by level (correct/total), grounded:" if "grounded" in tally else "")
-    if "grounded" in tally:
-        for lv in sorted(tally["grounded"]["by_level"]):
-            a, b = tally["grounded"]["by_level"][lv]
-            print(f"    L{lv}: {a}/{b}")
+        print(f"  {c:9}: {tally[c]['correct']}/{n} = {tally[c]['correct']/n:.1%}" if n else c)
+    if "bare" in tally and "grounded" in tally and n:
+        print(f"  LIFT (grounded − bare): {(tally['grounded']['correct']-tally['bare']['correct'])/n:+.1%}")
+
+    for dim, label in (("by_subject", "subject"), ("by_level", "level")):
+        keys = sorted(set().union(*[set(tally[c][dim]) for c in conditions]))
+        print(f"\n  by {label} ({' vs '.join(conditions)}):")
+        for k in keys:
+            cells = "  ".join(f"{c}={tally[c][dim].get(k,[0,0])[0]}/{tally[c][dim].get(k,[0,0])[1]}"
+                              for c in conditions)
+            print(f"    {str(k):22} {cells}")
 
 
 if __name__ == "__main__":

@@ -31,6 +31,15 @@ def test_recovers_tool_calls_list_wrapper():
     assert len(calls) == 1 and calls[0].name == "g"
 
 
+def test_recovers_underscoreless_toolcalls_alias():
+    # observed on MATH-500 grounded runs: qwen emits {"toolcalls": [...]} (no underscore),
+    # which used to leak into the final answer instead of being executed
+    calls = _tool_calls_from_text(
+        '{"toolcalls": [{"name": "symbolic_math", "args": {"operation": "solve", "expression": "x-1"}}]}')
+    assert len(calls) == 1 and calls[0].name == "symbolic_math"
+    assert calls[0].arguments == {"operation": "solve", "expression": "x-1"}
+
+
 def test_plain_answer_is_not_a_tool_call():
     assert _tool_calls_from_text("The answer is 42.") == []
     assert _tool_calls_from_text('{"summary": "just data", "n": 3}') == []  # no name/function

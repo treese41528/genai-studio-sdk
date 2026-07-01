@@ -218,9 +218,10 @@ def _tool_calls_from_text(content: str | None) -> list["ToolCall"]:
 
     Some OpenAI-compatible gateways / models (observed on the Purdue gateway with
     qwen) put the call in ``content`` as ``{"function": {"name", "arguments"}}``
-    (or ``{"name","arguments"}`` / ``{"tool_calls":[...]}``). Without this, the
-    loop would mistake the JSON for a final answer. Conservative: only fires when
-    the content is essentially just that JSON object/array.
+    (or ``{"name","arguments"}`` / ``{"tool_calls":[...]}`` / the underscore-less
+    ``{"toolcalls":[...]}``). Without this, the loop would mistake the JSON for a
+    final answer. Conservative: only fires when the content is essentially just
+    that JSON object/array.
     """
     if not content:
         return []
@@ -239,8 +240,14 @@ def _tool_calls_from_text(content: str | None) -> list["ToolCall"]:
                 obj = None
     if obj is None:
         return []
-    if isinstance(obj, dict) and isinstance(obj.get("tool_calls"), list):
-        items = obj["tool_calls"]
+    if isinstance(obj, dict):
+        tc = obj.get("tool_calls", obj.get("toolcalls", obj.get("tool_call")))
+        if isinstance(tc, list):
+            items = tc
+        elif isinstance(tc, dict):
+            items = [tc]
+        else:
+            items = [obj]
     else:
         items = obj if isinstance(obj, list) else [obj]
     calls: list[ToolCall] = []
@@ -251,7 +258,7 @@ def _tool_calls_from_text(content: str | None) -> list["ToolCall"]:
         name = fn.get("name")
         if not name or not isinstance(name, str):
             continue
-        args = fn.get("arguments", fn.get("parameters", {}))
+        args = fn.get("arguments", fn.get("parameters", fn.get("args", {})))
         if isinstance(args, str):
             args = _loads_args(args)
         calls.append(ToolCall(id=c.get("id") or f"text-{uuid.uuid4().hex[:6]}",
