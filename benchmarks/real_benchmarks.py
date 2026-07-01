@@ -64,9 +64,14 @@ def _fetch(name: str) -> str:
 
 
 def _sample(items: list, n: int, seed: int) -> list:
-    if n <= 0 or n >= len(items):
-        return items
-    return random.Random(seed).sample(items, n)
+    """PREFIX-STABLE sample: a seeded shuffle, then the first n — so sample(n=40) has
+    sample(n=20) as a strict prefix. This lets an eval GROW n incrementally and reuse the
+    smaller run's per-task results (the positional ids ``sqa_0…`` then stay put as n grows).
+    (Differs from ``random.sample(items, n)``, which gives a different subset per n; the
+    eval's signature now hashes task CONTENT, so the change can't cause stale reuse.)"""
+    perm = list(items)
+    random.Random(seed).shuffle(perm)
+    return perm if (n <= 0 or n >= len(perm)) else perm[:n]
 
 
 def load_gsm8k(n: int = 20, *, seed: int = 0) -> list:

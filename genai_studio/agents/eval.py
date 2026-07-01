@@ -266,7 +266,8 @@ def evaluate(agent_factory: Callable[[Case, Any], Any], cases: Sequence[Case], *
              k: int = 5, judge: Grader | None = None, trace_dir: str | None = None,
              threshold: float = 1.0, normalize: Callable[[str], str] | None = None,
              on_run: Callable[[Case, RunRecord], None] | None = None,
-             done_ids: set | None = None) -> EvalReport:
+             done_ids: set | None = None,
+             done_runs: set | None = None) -> EvalReport:
     """Run each case ``k`` times and report reliability (pass^k / pass@k / consistency).
 
     Args:
@@ -289,6 +290,12 @@ def evaluate(agent_factory: Callable[[Case, Any], Any], cases: Sequence[Case], *
             must never abort a long sweep.
         done_ids: case ids to skip (already checkpointed in a prior, interrupted
             run) — crash-resumable sweeps, paired with ``on_run``.
+        done_runs: ``(case_id, run_idx)`` pairs to skip — finer-grained than
+            ``done_ids``: lets a caller reuse INDIVIDUAL completed runs (e.g. grow k
+            from 2→3 and run only run 2, or grow n and run only the new tasks). A case
+            whose every requested run is in ``done_runs`` contributes no fresh
+            ``CaseReport`` — the caller is expected to rebuild the full report from its
+            own durable cell store (see benchmarks/agentic_eval.py).
 
     With no grader at all, a run "passes" if it merely finished with a non-blank
     answer — then ``consistency`` is the signal to watch, not pass^k.
@@ -305,6 +312,8 @@ def evaluate(agent_factory: Callable[[Case, Any], Any], cases: Sequence[Case], *
             continue                                    # resumability: already done
         runs: list[RunRecord] = []
         for r in range(k):
+            if done_runs and (case.id, r) in done_runs:
+                continue                                # this run is already in the caller's cell store
             trace_path = os.path.join(trace_dir, f"{case.id}_r{r}.jsonl") if trace_dir else None
             # mode='w': each {id}_r{run}.jsonl is owned by exactly one run, so a
             # re-run truncates instead of appending stale events.
@@ -320,7 +329,8 @@ def evaluate(agent_factory: Callable[[Case, Any], Any], cases: Sequence[Case], *
                     on_run(case, rec)
                 except Exception:                       # a checkpoint sink must not abort the sweep
                     pass
-        reports.append(CaseReport(case.id, runs, _norm=norm))
+        if runs:                                        # only build a report for FRESHLY-run cells
+            reports.append(CaseReport(case.id, runs, _norm=norm))
     return EvalReport(reports)
 
 

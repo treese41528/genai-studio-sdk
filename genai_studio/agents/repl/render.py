@@ -1,0 +1,120 @@
+"""``StreamRenderer`` — turns ``Agent.stream`` events into live terminal output.
+
+Drives off the AgentEvent stream (NOT the tracer, which can't prompt). Assistant text is
+BUFFERED per segment and flushed on the next tool call / final — and a segment that is
+actually a tool-call JSON (some gateway models emit tool calls as text, recovered by the
+Agent) is DROPPED rather than shown. A spinner covers model calls; it is never started
+during tool execution (a tool may block on an approval ``input()`` prompt). ``StepFinished``
+stub fields are ignored.
+"""
+
+from __future__ import annotations
+
+import sys
+
+from ..client import _tool_calls_from_text
+from ..events import Final, StepFinished, TextDelta, ToolCallFinished, ToolCallStarted
+
+_DIM, _RED, _RESET = "\033[2m", "\033[31m", "\033[0m"
+
+
+def _short(args: dict, n: int = 60) -> str:
+    s = ", ".join(f"{k}={v!r}" for k, v in (args or {}).items())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _oneline(s, n: int = 100) -> str:
+    s = " ".join(str(s or "").split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _is_toolcall_text(text: str) -> bool:
+    """True if the text is really a tool-call emitted as JSON (so we drop, not show it)."""
+    try:
+        return bool(_tool_calls_from_text(text))
+    except Exception:
+        return False
+
+
+class StreamRenderer:
+    def __init__(self, *, color=None, stream=None):
+        self.out = stream or sys.stdout
+        self.color = (self.out.isatty() if color is None else color)
+        self._spinner = None
+        self._seg: list[str] = []          # assistant text buffered since the last flush
+        self._printed = False              # did we print any real assistant text this turn?
+        self.result = None
+
+    def _c(self, s, code):
+        return f"{code}{s}{_RESET}" if self.color else s
+
+    def _spin(self, msg):
+        self._stop_spin()
+        try:
+            from genai_studio import Spinner
+            self._spinner = Spinner(msg)
+            self._spinner.start()
+        except Exception:
+            self._spinner = None
+
+    def _stop_spin(self):
+        if self._spinner is not None:
+            try:
+                self._spinner.stop()
+            except Exception:
+                pass
+            self._spinner = None
+
+    def _flush_text(self) -> None:
+        """Print the buffered assistant text, unless it's actually a tool-call JSON."""
+        text = "".join(self._seg).strip()
+        self._seg = []
+        if not text or _is_toolcall_text(text):
+            return
+        self.out.write(text + "\n")
+        self.out.flush()
+        self._printed = True
+
+    def start(self):
+        self._spin("thinking…")
+
+    def handle(self, ev):
+        if isinstance(ev, TextDelta):
+            self._seg.append(ev.text)              # buffer (keep the spinner running)
+        elif isinstance(ev, ToolCallStarted):
+            self._stop_spin()
+            self._flush_text()                     # show any real preamble; drop tool-JSON
+            self.out.write(self._c(f"  → {ev.name}({_short(ev.arguments)})\n", _DIM))
+            self.out.flush()
+            # NB: no spinner here — the tool may block on an approval input() prompt.
+        elif isinstance(ev, ToolCallFinished):
+            self._stop_spin()
+            r = ev.result
+            if getattr(r, "error", None):
+                self.out.write(self._c(f"  ✗ {_oneline(r.error)}\n", _RED))
+            else:
+                self.out.write(self._c(f"  ← {_oneline(getattr(r, 'content', ''))}\n", _DIM))
+            self.out.flush()
+            self._spin("thinking…")
+        elif isinstance(ev, StepFinished):
+            self._spin("thinking…")
+        elif isinstance(ev, Final):
+            self._stop_spin()
+            res = ev.result
+            self.result = res
+            self._flush_text()                     # the final answer (if streamed as text)
+            text = (getattr(res, "text", "") or "").strip()
+            if not self._printed and text and not _is_toolcall_text(text):
+                self.out.write(text + "\n")        # finish-tool / non-streamed answer
+            stopped = getattr(res, "stopped", "final")
+            if stopped and stopped != "final":
+                note = {"cancelled": "(interrupted)", "max_steps": "(stopped: step limit)",
+                        "budget": "(stopped: budget)",
+                        "error": f"(error: {getattr(res, 'error', '')})"}.get(stopped, f"({stopped})")
+                self.out.write(self._c(note + "\n", _RED if stopped == "error" else _DIM))
+            self.out.flush()
+
+    def abort(self):
+        self._stop_spin()
+        self.out.write(self._c("\n(aborted)\n", _RED))
+        self.out.flush()

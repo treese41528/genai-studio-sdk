@@ -12,5 +12,8 @@ benchmarks/_results/*.log
 benchmarks/_results/*.txt
 benchmarks/_results/logprobs_probe*
 benchmarks/_results/partial/
+# agentic_eval run output (logs, per-model snapshots, accumulators, backups) — regenerable;
+# the routing results are documented in benchmarks/README.md
+benchmarks/_results/agentic_eval/
 # Downloaded benchmark datasets (fetched on demand; not vendored — answer keys/licences)
 benchmarks/_data/benchmarks/

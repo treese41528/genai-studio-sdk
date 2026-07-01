@@ -464,6 +464,7 @@ class ToolRegistry:
 
     def __init__(self, tools: Iterable = ()):
         self._tools: dict[str, Tool] = {}
+        self._deferred: set[str] = set()        # names whose schema is withheld until unlocked
         for t in tools:
             self.add(t)
 
@@ -487,6 +488,28 @@ class ToolRegistry:
 
     def openai_tools(self) -> list[dict]:
         return [t.spec.to_openai() for t in self._tools.values()]
+
+    # ── deferred-tool partition (opt-in, used only when Agent.tool_search is set) ──
+    def mark_deferred(self, *names: str) -> None:
+        """Withhold these tools' schemas until they are unlocked (they still execute if called)."""
+        self._deferred.update(n for n in names if n in self._tools)
+
+    def is_deferred(self, name: str) -> bool:
+        return name in self._deferred
+
+    def catalog(self) -> list:
+        """``(name, first-line-of-description)`` for every registered tool — the always-on
+        lightweight listing the model searches over."""
+        out = []
+        for name, t in self._tools.items():
+            lines = (t.spec.description or "").strip().splitlines()
+            out.append((name, lines[0] if lines else ""))
+        return out
+
+    def active_specs(self, unlocked) -> list[ToolSpec]:
+        """Specs for the eager (non-deferred) tools plus the currently-``unlocked`` deferred ones."""
+        return [t.spec for name, t in self._tools.items()
+                if name not in self._deferred or name in unlocked]
 
     def _unknown(self, name: str) -> ToolResult:
         available = ", ".join(self._tools) or "(none)"

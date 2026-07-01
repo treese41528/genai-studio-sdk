@@ -277,3 +277,70 @@ results in `_results/hotpotqa_paper_n500.json`). Fair-EM (infra drops excluded).
 
 (A separate `hotpotqa_exact_n3.json` holds an earlier *zero-shot* smoke test, kept only
 as a baseline; the paper-faithful numbers are the `hotpotqa_paper_*` files.)
+
+---
+
+## Agentic reliability + model routing (`agentic_eval.py`)
+
+Beyond the four paper replications, `agentic_eval.py` (+ `real_benchmarks.py`) is a **reliability +
+model-routing** harness: it runs each task *k* times per condition and reports **accuracy /
+hallucination (= incorrect-rate) / abstention** (SimpleQA 3-way) plus an F-score and tokens, on top
+of pass^k / consistency. It grounds the eval in real datasets — **SimpleQA** (single-hop facts),
+**GSM8K** (math), **MuSiQue** (multi-hop), and **BFCL** (tool-call AST-graded) — downloaded and
+cached to a gitignored `_data/benchmarks/`.
+
+**Design.** The `grounded` condition gives the agent `web_search` + `wikipedia` tools. Grading uses a
+**rotating peer-judge panel**: per task a judge is sampled (seeded) from a validated flagship pool
+{gpt-oss:120b, llama3.3:70b, llama4:latest, qwen2.5:72b}, **excluding the agent's own model** (no
+self-judging), with a de-biased question-free judge prompt. A **resumable matrix accumulator** keys
+cells by (task-content, run, sampling-regime), so a screen can grow *n* / *k* while reusing cells.
+
+### Finding 1 — reasoning models want GREEDY, not the temp=0.6 recipe
+
+The documented reasoning-benchmark recipe (temperature 0.6, top-p 0.95) is the **wrong default for
+agentic tasks**. A controlled same-question A/B at n=60 (only temperature changed):
+
+| model | temp=0.6 | greedy (0.0) | Δ |
+|---|---|---|---|
+| **deepseek-r1:32b** | 21% (38% abstain) | **46%** (34% abstain) | **+25pp** — `<think>` looping collapsed |
+| qwq:latest | 36% | 38% | +2pp (~flat) |
+| qwen3:4b | 36% | 37% | +1pp (~flat) |
+
+Greedy is best-or-tied for all three (never worse), **transformative for `deepseek-r1`**. The
+framework default (`_thinking_sampling`) was corrected 0.6 → greedy. (An exploratory sweep at n=10
+overstated `qwq` at 53%; the n=60 finalization corrected it to 38% — small-n screens can mislead.)
+
+> This is the **opposite** of the paper-ReAct finding above (§ Reproducibility), where thinking
+> models needed temp=0.6 — because that setting used *greedy + no stop sequences + a completion
+> grammar*, where greedy degenerates to empty. Different baseline + task ⇒ opposite conclusion.
+
+### Finding 2 — the routing table (all 10 models @ n=60, reasoning models at greedy)
+
+| model | acc | halluc | abstain | F | tokens |
+|---|---|---|---|---|---|
+| **qwen2.5:72b** | **47%** | 30% | 23% | 0.53 | 3395 |
+| **deepseek-r1:32b** | 46% | **19%** | 34% | **0.56** | 2477 |
+| llama4:latest | 43% | 45% | 12% | 0.46 | **335** |
+| gemma3:27b | 38% | 23% | 38% | 0.47 | 2697 |
+| qwq:latest | 38% | 23% | 39% | 0.48 | 2729 |
+| qwen3:4b | 37% | 47% | 17% | 0.40 | 2096 |
+| llama3.3:70b | 34% | 33% | 33% | 0.41 | 2510 |
+| gpt-oss:120b | 31% | **4%** | 65% | 0.46 | 10340 |
+| llama3.2:latest | 6% | 36% | 58% | 0.08 | 3805 |
+| gemma3:1b | 3% | 72% | 26% | 0.03 | 4333 |
+
+**Route by task:** math (GSM8K) → llama4 93% (cheapest) / qwen2.5 90% / qwen3 87% · facts (SimpleQA)
+→ deepseek-r1 43% / qwen2.5 32% · multi-hop (MuSiQue) → all weak (≤25%, needs *decomposition*, not a
+model swap) · "must not be wrong" → gpt-oss (4% halluc, at 10k tokens + 65% abstention) · default →
+qwen2.5:72b.
+
+**Caveats.** k=1 screen (directional, ±~10pp; the peer-judge + F-score make the *ordering*
+trustworthy); `grounded` condition only. A related finding: **grounding cuts hallucination when there
+IS an answer but INCREASES it on unanswerable / false-premise questions** (tools make the model
+confabulate from tangential hits instead of refusing). Reproduce:
+
+```bash
+python benchmarks/agentic_eval.py --benchmarks simpleqa gsm8k musique --n 60 --k 1 \
+  --conditions grounded --model qwen2.5:72b \
+  --judge-pool gpt-oss:120b llama3.3:70b llama4:latest qwen2.5:72b --seed 0
+```

@@ -1,0 +1,4 @@
+# The genai_studio root holds AUTHORED skills (committable) alongside machine-maintained
+# state (recall-memory + sessions), which must NOT be committed.
+memory/
+sessions/

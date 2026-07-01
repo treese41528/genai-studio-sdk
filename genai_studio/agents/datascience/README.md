@@ -1,18 +1,19 @@
 # `genai_studio.agents.datascience` — an agentic data-science toolkit
 
 A small, self-contained layer that turns the core agent framework
-(`genai_studio.agents`) into a **data-science analyst**: a handful of typed
-`@tool`s for loading data, computing statistics, fitting models, and plotting,
-plus a pre-assembled `data_analyst` agent that wires them together. It is the
-optional **`[datascience]`** extra — the heavy scientific stack
-(pandas / NumPy / scikit-learn / SciPy / statsmodels / matplotlib) is imported
-**only when a tool actually runs**, so importing the core stays light.
+(`genai_studio.agents`) into a **data-science analyst**: typed `@tool`s for
+**accessing data** (your own CSV/Parquet/Excel/JSON, bundled toy sets, read-only
+SQL), **computing** (a persistent Python sandbox, statistics, model fitting), and
+**presenting** (headless plotting) — plus a pre-assembled `data_analyst` agent
+that wires them together. It is the optional **`[datascience]`** extra: the heavy
+scientific stack (pandas / NumPy / scikit-learn / SciPy / statsmodels / matplotlib)
+is imported **only when a tool actually runs**, so importing the core stays light.
 
-The whole package is ~530 lines. There is no new agent machinery here: every
-tool is an ordinary `@tool`, and `data_analyst` is a thin factory over the core
-`Agent`. What makes it useful is the *combination* — a persistent code
-sandbox sharing a namespace with a dataset loader, fronted by a model that
-decides what to compute.
+It is small and self-contained. There is no new agent machinery here: every tool
+is an ordinary `@tool`, and `data_analyst` is a thin factory over the core
+`Agent`. What makes it useful is the *combination* — a persistent code sandbox
+sharing a namespace with the data loaders, fronted by a model that decides what
+to compute.
 
 ---
 
@@ -51,25 +52,31 @@ and writes a short, evidence-backed conclusion — never guessing from the promp
 |---|---|
 | `python_exec` | Execute Python in a **persistent** namespace — a DataFrame built in one step is still there in the next. The trailing expression is summarised notebook-style; full tracebacks are fed back so the model self-corrects. |
 | `load_dataset` | Load a bundled scikit-learn toy set (`iris`, `wine`, `diabetes`, `breast_cancer`). Nothing is downloaded or vendored. When sharing a namespace, the frame is injected as `df` for `python_exec`. |
+| `load_table` | Load **your own** data file — CSV / Parquet / Excel / JSON — into the shared namespace as a DataFrame (rejects non-`http(s)` remote schemes; a clear error on unsupported formats). This is the bring-your-own-data loader that `load_dataset`'s toy sets aren't. |
+| `sql_query` | Run a **read-only** SQL query against a SQLite database and return the result as a DataFrame. Write-proof: a prefix check + single-statement enforcement + `mode=ro` connection, so `INSERT`/`UPDATE`/`DROP`/attach are rejected. |
+| `r_exec` | Execute R via a temporary-file `Rscript` call with a timeout (opt-in; needs R on `PATH`) — for analyses where R's ecosystem is the right tool. |
 | `describe_data` | One-call EDA of a CSV: shape, dtypes, missing-value counts, summary statistics, and the strongest pairwise correlations. |
 | `hypothesis_test` | Classical tests on CSV columns via `scipy.stats`: two-/one-sample t-test, Pearson/Spearman correlation, chi-square independence, one-way ANOVA — each reporting the statistic, p-value, and a reject / fail-to-reject conclusion at a chosen α. |
 | `fit_model` | Fit a quick model on a bundled dataset — OLS / logistic (`statsmodels`) or random forest (`scikit-learn`) — and return a text summary (coefficients or feature importances + in-sample R²). |
 | `plot` | Run matplotlib code **headlessly** (forces the `Agg` backend before importing pyplot, so it works with no display) and save the figure to a PNG; the `Figure` rides along in `ToolResult.data`. |
 
-The `data_analyst(client, *, model="qwen2.5:72b", **kw)` factory bundles all of
-the above — plus the core `calculator` and `final_answer` — behind a system
-prompt that enforces good habits: compute in `python_exec` (never in the
-model's head), inspect data before concluding, build up state across steps,
-don't repeat tool calls, and stop to write a plain-text, evidence-backed answer
-once there's enough to say. `python_exec` and `load_dataset` are bound to **one
-shared namespace** so a loaded frame flows directly into executed code.
+The `data_analyst(client, *, model="qwen2.5:72b", **kw)` factory bundles
+`python_exec`, `load_dataset`, **`load_table`**, `describe_data`, `fit_model`,
+`hypothesis_test`, `plot` — plus the core `calculator` and `final_answer` — behind
+a system prompt that enforces good habits: compute in `python_exec` (never in the
+model's head), inspect data before concluding, build up state across steps, don't
+repeat tool calls, and stop to write a plain-text, evidence-backed answer once
+there's enough to say. `python_exec`, `load_dataset`, and `load_table` are bound
+to **one shared namespace** so a loaded frame flows directly into executed code.
+For SQL or R, add `make_sql_query(db)` / `make_r_exec()` from `.tools.io_tools` /
+`.tools.r_exec`.
 
-```
-ns = {}                          # one namespace shared by python_exec + load_dataset
+```python
+ns = {}                          # one namespace shared by python_exec + the data loaders
 data_analyst = Agent(
     client, model, system=DATA_ANALYST_SYSTEM,
-    tools=[make_python_exec(ns), make_load_dataset(ns), describe_data,
-           fit_model, hypothesis_test, plot, calculator, final_answer],
+    tools=[make_python_exec(ns), make_load_dataset(ns), make_load_table(ns),
+           describe_data, fit_model, hypothesis_test, plot, calculator, final_answer],
 )
 ```
 
@@ -104,12 +111,16 @@ web-fetched content — a model (or a prompt-injected one) can run
 privileges.
 
 The seam is designed for a drop-in replacement: anything matching
-`code: str -> ToolResult` can stand in. The documented hardening (in
-`tools/python_exec.py`) runs the code in a subprocess that sets
-`resource.setrlimit` (address space / CPU), enforces a wall-clock timeout +
-`SIGKILL`, drops to a restricted user in a container/nsjail with no network and
-a scratch filesystem, and ships state by pickling the namespace in and out.
-Harden before untrusted data.
+`code: str -> ToolResult` can stand in. **A hardened backend ships** —
+`make_sandboxed_python_exec(*, mem_mb=2048, cpu_s=10, wall_s=15, allow_network=False, ...)`
+in `tools/sandbox.py` — a drop-in for `python_exec` that runs each call in a
+subprocess made its own session (`os.setsid`), sets `RLIMIT_AS`/`RLIMIT_CPU`
+(+ optional `NPROC`/`FSIZE`), enforces a wall-clock timeout that **SIGKILLs the
+whole process group** (no orphaned forks), soft-blocks network, and ships
+picklable state across calls. It is an honest *poor-man's* sandbox, **not** an OS
+jail (full host filesystem read/write; network block is soft/bypassable), so for
+genuinely untrusted input run it inside a container / nsjail with no network and a
+scratch filesystem. Harden before untrusted data.
 
 ---
 

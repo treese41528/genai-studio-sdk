@@ -26,6 +26,7 @@ import contextvars
 import json
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import Any, Sequence
 
@@ -186,6 +187,7 @@ class Agent:
     system: str | None = None
     max_steps: int = 10
     temperature: float | None = None
+    sampling: dict = field(default_factory=dict)  # extra sampling opts (e.g. {"top_p": 0.95}) forwarded to every client call
     tracer: Any = field(default_factory=ConsoleTracer)
     output_schema: type | None = None
     on_tool_error: str = "recover"  # 'recover' | 'abort'
@@ -193,9 +195,14 @@ class Agent:
     finish_tool_names: tuple = ("final_answer", "finish")  # calls that end the loop
     name: str | None = None  # default tool name when exposed via as_tool()
     guards: Sequence = ()  # before/after-tool hooks (deterministic policy seam)
+    tool_search: Any = None  # opt-in deferred-tool config (ToolSearch); None = all tools eager
 
     def __post_init__(self):
         self._registry = ToolRegistry(self.tools)
+        self._catalog = None
+        self._rank = None
+        if self.tool_search is not None:
+            self._setup_deferred()
         if self.output_schema is not None:
             try:
                 import pydantic  # noqa: F401
@@ -231,7 +238,9 @@ class Agent:
         budget = budget or Budget()
         cancel = _as_cancel(cancel)
         native = bool(getattr(self.client, "supports_native_tools", False))
-        specs = self._specs(native)
+        deferred = self.tool_search is not None
+        unlocked = OrderedDict() if deferred else None  # run-local LRU of unlocked deferred tools
+        specs = self._specs(native, unlocked)
         msgs = self._build_initial(prompt, memory, native)
         steps: list[Step] = []
         usage = Usage.zero()
@@ -243,6 +252,8 @@ class Agent:
                 if budget.max_steps is not None and step >= budget.max_steps:
                     raise BudgetExceeded("steps", budget.max_steps, step)
                 cancel.check()
+                if deferred:                    # active tool schemas change as tools unlock
+                    specs = self._specs(native, unlocked)
 
                 # (1) Ask the model. The driver fills this intent with a real
                 #     ModelResponse (native call, ReAct, or streamed-and-assembled).
@@ -316,6 +327,8 @@ class Agent:
                     rec.tool_results.append(result)
                     msgs.append(self._tool_message(call, result))
                     budget.tick_tool_call()
+                    if deferred:                # unlock searched/guessed tool schemas for next step
+                        self._apply_unlock(unlocked, call, result)
                     if result.error and self.on_tool_error == "abort":
                         raise ToolError(result.error, tool_name=call.name, call_id=call.id)
                     cancel.check()
@@ -346,7 +359,7 @@ class Agent:
             resp = self.client.complete(
                 intent.messages, tools=intent.tools, model=self.model,
                 temperature=self.temperature, on_retry=self._on_retry(intent.step),
-            )
+                **self.sampling)
             self._emit(LLMResponse(response=resp, step=intent.step))
             return resp
         if isinstance(intent, _ExecTool):
@@ -442,7 +455,7 @@ class Agent:
             resp = await self.client.acomplete(
                 intent.messages, tools=intent.tools, model=self.model,
                 temperature=self.temperature, on_retry=self._on_retry(intent.step),
-            )
+                **self.sampling)
             self._emit(LLMResponse(response=resp, step=intent.step))
             return resp
         if isinstance(intent, _ExecTool):
@@ -490,7 +503,8 @@ class Agent:
                     streamed = getattr(self.client, "supports_streaming", False)
                     if streamed:
                         for ch in self.client.stream(intent.messages, tools=intent.tools,
-                                                     model=self.model, temperature=self.temperature):
+                                                     model=self.model, temperature=self.temperature,
+                                                     **self.sampling):
                             if isinstance(ch, _TextChunk):
                                 text_parts.append(ch.delta)
                                 yield TextDelta(text=ch.delta, step=intent.step)
@@ -534,7 +548,8 @@ class Agent:
                     streamed = getattr(self.client, "supports_streaming", False)
                     if streamed:
                         async for ch in self.client.astream(intent.messages, tools=intent.tools,
-                                                            model=self.model, temperature=self.temperature):
+                                                            model=self.model, temperature=self.temperature,
+                                                            **self.sampling):
                             if isinstance(ch, _TextChunk):
                                 text_parts.append(ch.delta)
                                 yield TextDelta(text=ch.delta, step=intent.step)
@@ -567,24 +582,38 @@ class Agent:
     def _assemble_or_degrade_sync(self, intent, streamed, text_parts, buf, finish, usage):
         if not streamed:
             return self.client.complete(intent.messages, tools=intent.tools,
-                                        model=self.model, temperature=self.temperature)
+                                        model=self.model, temperature=self.temperature,
+                                        **self.sampling)
         calls, ok = _assemble_tool_calls(buf)
         if buf and not ok:  # watch-item 2: tool deltas didn't assemble -> degrade
             return self.client.complete(intent.messages, tools=intent.tools,
-                                        model=self.model, temperature=self.temperature)
-        return ModelResponse(text="".join(text_parts) or None, tool_calls=calls,
-                             usage=usage or Usage(), finish_reason=finish)
+                                        model=self.model, temperature=self.temperature,
+                                        **self.sampling)
+        text = "".join(text_parts) or None
+        if not calls and text:  # streaming parity with _parse_completion: recover a text-emitted tool call
+            from .client import _tool_calls_from_text
+            recovered = _tool_calls_from_text(text)
+            if recovered:
+                calls, text = recovered, None
+        return ModelResponse(text=text, tool_calls=calls, usage=usage or Usage(), finish_reason=finish)
 
     async def _assemble_or_degrade_async(self, intent, streamed, text_parts, buf, finish, usage):
         if not streamed:
             return await self.client.acomplete(intent.messages, tools=intent.tools,
-                                               model=self.model, temperature=self.temperature)
+                                               model=self.model, temperature=self.temperature,
+                                               **self.sampling)
         calls, ok = _assemble_tool_calls(buf)
         if buf and not ok:
             return await self.client.acomplete(intent.messages, tools=intent.tools,
-                                               model=self.model, temperature=self.temperature)
-        return ModelResponse(text="".join(text_parts) or None, tool_calls=calls,
-                             usage=usage or Usage(), finish_reason=finish)
+                                               model=self.model, temperature=self.temperature,
+                                               **self.sampling)
+        text = "".join(text_parts) or None
+        if not calls and text:  # streaming parity with _parse_completion: recover a text-emitted tool call
+            from .client import _tool_calls_from_text
+            recovered = _tool_calls_from_text(text)
+            if recovered:
+                calls, text = recovered, None
+        return ModelResponse(text=text, tool_calls=calls, usage=usage or Usage(), finish_reason=finish)
 
     # ── expose this agent AS a tool (the minimal multi-agent primitive) ──────
     def as_tool(self, name: str | None = None, description: str | None = None, *,
@@ -704,8 +733,11 @@ class Agent:
         return Tool(_delegate, spec)
 
     # ── helpers shared by all drivers ────────────────────────────────────────
-    def _specs(self, native: bool) -> list[ToolSpec]:
-        specs = list(self._registry.specs())
+    def _specs(self, native: bool, unlocked=None) -> list[ToolSpec]:
+        # unlocked is None for eager agents (full set, unchanged); a set/dict for deferred agents
+        # (eager + currently-unlocked tools only — recomputed per model call as tools unlock).
+        specs = list(self._registry.specs() if unlocked is None
+                     else self._registry.active_specs(unlocked))
         if self.output_schema is not None and native:
             specs.append(ToolSpec(
                 name="return_result",
@@ -713,6 +745,42 @@ class Agent:
                 parameters=_json_schema(self.output_schema),
             ))
         return specs
+
+    # ── deferred tools (opt-in via Agent.tool_search) ────────────────────────
+    def _setup_deferred(self) -> None:
+        """Partition the registry into eager + deferred and register the search_tools meta-tool.
+        The catalog (name + 1-line) is always-on; deferred schemas load only on unlock."""
+        from .tool_search import keyword_rank, make_search_tool
+        ts = self.tool_search
+        keep = (set(ts.eager) | set(self.finish_tool_names) | {ts.tool_name, "return_result"})
+        names = [t.name for t in self._registry.specs()]            # current (user) tool names
+        defer = ([n for n in names if n not in keep] if ts.deferred in (None, ("*",))
+                 else [n for n in ts.deferred if n not in keep])
+        self._registry.mark_deferred(*defer)
+        self._catalog = self._registry.catalog()                   # user tools only (search not added yet)
+        self._rank = ts.rank or keyword_rank                       # embedding_rank if configured, else keyword
+        self._registry.add(make_search_tool(self._catalog, rank=self._rank,
+                                            tool_name=ts.tool_name, search_limit=ts.search_limit))
+
+    def _apply_unlock(self, unlocked, call, result) -> None:
+        """After a tool runs under deferral: unlock matches from search_tools (or, if a guard
+        stripped result.data, re-rank from the query), or auto-unlock a name-guessed deferred
+        tool. LRU-evict beyond max_active; touching a tool refreshes it."""
+        ts = self.tool_search
+        if call.name == ts.tool_name:
+            names = (result.data or {}).get("unlock") if isinstance(result.data, dict) else None
+            if names is None:                                      # after-guard dropped .data -> re-rank
+                q = (call.arguments or {}).get("query", "")
+                names = self._rank(q, self._catalog, ts.search_limit) if q else []
+        elif self._registry.is_deferred(call.name):
+            names = [call.name]                                    # name-guessed deferred tool self-unlocks
+        else:
+            return
+        for n in names:
+            unlocked.pop(n, None)                                  # refresh-on-use (move to MRU end)
+            unlocked[n] = True
+        while len(unlocked) > ts.max_active:
+            unlocked.popitem(last=False)                           # evict least-recently-used
 
     def _build_initial(self, prompt, memory, native: bool) -> list[Message]:
         msgs: list[Message] = []

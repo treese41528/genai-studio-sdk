@@ -58,12 +58,26 @@ are call-graded, not text-graded, and condition-independent — run with one con
 
     python benchmarks/agentic_eval.py --benchmarks bfcl bfcl_irrelevance --n 40 --k 3
 
-Live, gateway-bound (~20 RPM, resumable via the eval harness's trace dir).
+Live, gateway-bound (~20 RPM) and CRASH-RESUMABLE — a large sweep can run for hours,
+so progress is checkpointed at two levels and re-run picks up where it stopped:
+- CONDITION level: a finished condition's full aggregate (incl. per-task records, which
+  the paired Δs need) is saved under ``_results/agentic_eval/<tag>.json`` (atomic write);
+  on resume a matching condition is reused without re-running.
+- RUN level: within a condition every completed run is appended to a per-run JSONL
+  checkpoint under ``_results/agentic_eval/partial/``; on resume, cases whose k runs all
+  finished are skipped and their records reconstructed, so an interrupted condition
+  resumes mid-way instead of restarting.
+A SIGNATURE (sorted task ids + k + resolved model) gates reuse: change n/seed/benchmarks/
+categories/k/model and the stale checkpoint is ignored, never silently mixed with incompatible
+data. ``--no-resume`` forces a clean run; ``--seed`` selects the benchmark sample (and keys
+the checkpoint).
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import random
 import re
@@ -71,11 +85,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from genai_studio.agents import Agent, NullTracer
-from genai_studio.agents.eval import Case, evaluate
+from genai_studio.agents.eval import (
+    Case, CaseReport, EvalReport, RunRecord, _default_norm, evaluate)
 
-from _bench import make_client          # benchmarks/_bench.py: gateway client + model default
+from _bench import DEFAULT_MODEL, make_client   # benchmarks/_bench.py: gateway client + model default
 
 TRACE_ROOT = os.path.join(os.path.dirname(__file__), "_traces", "agentic_eval")
+RESULTS_ROOT = os.path.join(os.path.dirname(__file__), "_results", "agentic_eval")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -249,19 +265,39 @@ def classify(task: Task, answer: str) -> str:
     return "incorrect"
 
 
-_JUDGE_PROMPT = """Grade an ANSWER against the GOLD, SimpleQA-style. Compare ONLY to the gold — do
-NOT re-derive or re-solve the question yourself. Match the SEMANTIC content and ignore units, $/%/comma
-formatting, capitalisation, spelling, and surrounding words: gold '100' == 'John is missing $100'; gold
-'Au' == 'the symbol is Au'; a last name matches a full name. Reply with ONE token only:
-- CORRECT: states the gold answer in any phrasing; OR for a false-premise question, correctly refuses /
-  says the premise is false / says it cannot be answered.
-- NOT_ATTEMPTED: declines, says it doesn't know, or hedges without committing (answerable question).
-- INCORRECT: commits to an answer that CONFLICTS with the gold; OR for a false-premise question,
-  invents an answer instead of refusing.
+# CRITICAL: the answerable-question judge does NOT see the question. An audit (qwen2.5:72b
+# judge over GSM8K) found that feeding the question makes a weaker judge RE-SOLVE the problem
+# itself and then mark a CORRECT answer INCORRECT — 51/120 perfect answers failed (43%), even
+# 'gold 30 / answer 30 -> INCORRECT'. Removing the question (pure gold-vs-answer comparison)
+# fixed every one (validated 10/10 across semantic-equivalent / wrong / partial / exact cases).
+# The 'do not re-derive' instruction alone was NOT enough; the question had to go.
+_JUDGE_PROMPT = """Grade an ANSWER against the GOLD answer. Compare the ANSWER ONLY to the GOLD — do NOT
+try to solve or re-derive the question yourself; the GOLD is correct by definition. Match the SEMANTIC
+content and ignore units, $/%/comma formatting, capitalisation, spelling, and surrounding words: gold
+'100' matches '$100' or 'John is missing $100'; gold 'Au' matches 'the symbol is Au'; a last name matches
+a full name; an equivalent term matches (gold 'Russian troops' matches 'Soviet Red Army'). Reply with ONE
+token only:
+- CORRECT: states the gold, in any phrasing or an equivalent.
+- NOT_ATTEMPTED: declines, says it doesn't know, or is too vague to commit to the gold (e.g. gives only a
+  year when the gold is a full date).
+- INCORRECT: commits to something that CONFLICTS with the gold.
+
+GOLD answer: {gold}
+ANSWER to grade: {ans}
+
+Reply with ONLY: CORRECT, INCORRECT, or NOT_ATTEMPTED."""
+
+# False-premise tasks DO need the question (correctness = recognising the premise is false), but here
+# there is no gold value to re-derive, so re-derivation isn't a hazard.
+_JUDGE_REFUSE_PROMPT = """This is a FALSE-PREMISE question: the premise is false or unanswerable, so the
+ONLY correct response is to refuse, say it cannot be answered/verified, or point out the premise is
+false. Grade the ANSWER with ONE token only:
+- CORRECT: refuses, says it doesn't know / cannot answer, or says the premise is false/fictional.
+- INCORRECT: invents or commits to a concrete answer instead of refusing.
+- NOT_ATTEMPTED: empty / no response at all.
 
 Question: {q}
-GOLD answer: {gold}
-This is a FALSE-PREMISE question (correct = refuse): {refuse}
+Why the premise is false (note): {gold}
 ANSWER to grade: {ans}
 
 Reply with ONLY: CORRECT, INCORRECT, or NOT_ATTEMPTED."""
@@ -269,10 +305,13 @@ Reply with ONLY: CORRECT, INCORRECT, or NOT_ATTEMPTED."""
 
 def classify_judge(client, task: Task, answer: str, *, model=None) -> str:
     """LLM 3-way grade (robust to phrasing on free-form answers); falls back to the
-    deterministic rule on any judge error."""
+    deterministic rule on any judge error. The answerable-question prompt withholds the
+    question on purpose (see _JUDGE_PROMPT) — only false-premise grading needs it."""
     from genai_studio.agents import Message
-    prompt = _JUDGE_PROMPT.format(q=task.prompt, gold=task.note, refuse=task.must_refuse,
-                                  ans=(answer or "(no answer)"))
+    if task.must_refuse:
+        prompt = _JUDGE_REFUSE_PROMPT.format(q=task.prompt, gold=task.note, ans=(answer or "(no answer)"))
+    else:
+        prompt = _JUDGE_PROMPT.format(gold=task.note, ans=(answer or "(no answer)"))
     try:
         text = (client.complete([Message.user(prompt)], model=model).text or "").upper()
         for v in ("NOT_ATTEMPTED", "INCORRECT", "CORRECT"):   # order matters: INCORRECT contains CORRECT
@@ -286,8 +325,9 @@ def classify_judge(client, task: Task, answer: str, *, model=None) -> str:
 def classify_hybrid(client, task: Task, answer: str, *, model=None) -> str:
     """Default grader: deterministic where it is RELIABLE (exact numeric / gold present
     verbatim), the LLM judge only where it is NEEDED (free-form answers phrased
-    differently). A gateway-model judge was observed to mis-grade correct exact-numeric
-    answers ('$100' vs gold '100' -> INCORRECT), so numeric golds stay deterministic."""
+    differently). Numeric golds stay deterministic as defense-in-depth: even with the
+    fixed (question-free) judge prompt, a weak self-judge is best not trusted on exact
+    numbers when the deterministic check is authoritative."""
     det = classify(task, answer)
     if det == "correct":
         return "correct"                      # gold present verbatim — trustworthy, skip the judge
@@ -310,14 +350,18 @@ def _verdict_of(run) -> str:
 
 def _correct_grader(task: Task, classify_fn):
     """An eval.Case check: a run 'passes' (for pass^k) iff it's classified correct.
-    The verdict string is stashed in ``detail`` so aggregation reads it back (no
-    re-classification, so a judge classifier is called exactly once per run)."""
+    ``classify_fn(task, text) -> (verdict, judge)`` (judge is the model that graded it, or
+    None for the deterministic grader). Both are stashed in ``detail`` as
+    ``'<verdict>|j=<judge>'`` so aggregation reads the verdict back (``_verdict_of`` scans for
+    the verdict token, unaffected by the trailing judge tag) AND the judge that produced it is
+    recorded per cell — for later judge-effect analysis with the rotating peer panel."""
     def check(case, result, trace_path):
         text = result.text or ""
         if not text.strip():                   # empty output: a non-attempt, never a refusal
             return 0.0, "not_attempted"        # keeps accuracy and pass^k agreeing on blanks
-        verdict = classify_fn(task, text)
-        return (1.0 if verdict == "correct" else 0.0), verdict
+        verdict, judge = classify_fn(task, text)
+        detail = f"{verdict}|j={judge}" if judge else verdict
+        return (1.0 if verdict == "correct" else 0.0), detail
     return check
 
 
@@ -490,8 +534,52 @@ def _bfcl_grader(task: Task):
     return check
 
 
-def make_factory(condition: str, client, model, task_by_id: dict | None = None):
+def _thinking_sampling(model: str | None) -> tuple[float | None, dict]:
+    """Default sampling for reasoning models on THESE agentic (tool-use + grounded) tasks.
+
+    The documented reasoning-BENCHMARK recipe (temperature=0.6, top_p=0.95) was empirically
+    REFUTED here: a controlled temp SWEEP {0.0, 0.3, 0.6} × k=2 (2026-06-30) found temp=0.0
+    (greedy) best or tied-best for all three — qwq 53%→40→35 (monotonic), deepseek-r1 43%@t0
+    / 8% abstain vs 20% / 38% @t0.6 (greedy doubles acc + kills the <think> looping), qwen3
+    flat but lowest halluc at 0.0. So the default is GREEDY. (--temperature overrides for a
+    fresh sweep.) Every other model keeps the gateway default (None)."""
+    m = (model or "").lower()
+    if ("qwq" in m) or ("deepseek-r1" in m) or ("qwen3" in m):
+        # greedy — sweep-optimal for agentic tool-use. top_p is a no-op at temp=0 (argmax), but
+        # kept so the sampling regime (samp_id) matches the sweep's t0 cells and they REUSE.
+        return 0.0, {"top_p": 0.95}
+    return None, {}
+
+
+def _resolve_sampling(model: str | None, temp_override=None, top_p_override=None):
+    """(temperature, sampling) for a run. An explicit --temperature overrides the per-model
+    recipe (for a temperature SWEEP); otherwise fall back to _thinking_sampling(model)."""
+    if temp_override is not None:
+        return temp_override, ({"top_p": top_p_override} if top_p_override is not None else {})
+    return _thinking_sampling(model)
+
+
+def _samp_tag_for(temp, samp) -> str:
+    """Stable id for a sampling regime, recorded per cell + checked on reuse so a cell is only
+    ever reused under the SAME sampling. Temperature/top_p are absent from _signature, pool_tag
+    and _csig, so without this a model's temp=0.6 cells could silently mix with temp=None (or a
+    different sweep temp). Empty string for the gateway default -> legacy cells (no 'samp'
+    field) still reuse; only non-default sampling carves a distinct regime."""
+    if temp is None and not samp:
+        return ""
+    return "|".join([f"t{temp}"] + [f"{k}={samp[k]}" for k in sorted(samp)])
+
+
+def _samp_tag(model: str | None) -> str:
+    return _samp_tag_for(*_thinking_sampling(model))
+
+
+def make_factory(condition: str, client, model, task_by_id: dict | None = None,
+                 *, temperature=None, sampling=None):
     task_by_id = task_by_id or {}
+    if temperature is None and sampling is None:        # default: per-model reasoning recipe
+        temperature, sampling = _thinking_sampling(model)
+    sampling = sampling or {}
 
     def factory(case, tracer):
         task = task_by_id.get(case.id)
@@ -499,7 +587,7 @@ def make_factory(condition: str, client, model, task_by_id: dict | None = None):
             from genai_studio.agents.tools import final_answer
             tools = [_bfcl_tool(f) for f in task.meta["functions"]] + [final_answer]
             return Agent(client=client, model=model, tools=tools, system=BFCL_SYSTEM,
-                         tracer=tracer, max_steps=4)
+                         tracer=tracer, max_steps=4, temperature=temperature, sampling=sampling)
         ns: dict = {}                            # fresh namespace per run (independent)
         tools = _base_tools(ns)
         if condition in ("grounded", "verifier"):
@@ -507,7 +595,7 @@ def make_factory(condition: str, client, model, task_by_id: dict | None = None):
         if condition == "verifier":
             tools = tools + [_verifier_tool(client, model)]
         return Agent(client=client, model=model, tools=tools, system=SYSTEM,
-                     tracer=tracer, max_steps=6)
+                     tracer=tracer, max_steps=6, temperature=temperature, sampling=sampling)
     return factory
 
 
@@ -591,7 +679,10 @@ def aggregate(condition: str, tasks: list[Task], report) -> dict:
         for grp in (t.category, "ALL"):
             recs[grp].append(record)
             for run, v in zip(c.runs, verdicts):
-                used = _trace_tool_calls(run.trace_path) > 0
+                # resumed runs carry a persisted tool-call count (their trace file may
+                # be gone); fresh runs have no .tools attr, so read the trace.
+                n_tools = getattr(run, "tools", None)
+                used = (n_tools if n_tools is not None else _trace_tool_calls(run.trace_path)) > 0
                 tool_runs[grp] += used
                 correct_tool[grp] += (v == "correct" and used)
                 if run.tokens:
@@ -699,12 +790,183 @@ def print_deltas(per_condition: dict, base: str = "baseline") -> None:
         print(f"  {row['condition']:<12} " + "  ".join(parts))
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# Resumability — a durable (task, run) cell ACCUMULATOR
+# ════════════════════════════════════════════════════════════════════════════
+# A real sweep is gateway-bound (~20 RPM) and can run for hours/days — an interruption,
+# OR a deliberate decision to GROW the run, must not throw work away. The checkpoint is a
+# per-(benchmarks, seed, model, judge-pool) JSONL of CELLS ``(task_id, run_idx) -> {verdict,
+# answer, tokens, tool-count, judge}`` — keyed by ``pool_tag``, which excludes n and k. So
+# every cell is computed once and reused across (a) crash-resume, (b) n-GROWTH — prefix-stable
+# sampling keeps ids put, so more tasks just add rows, and (c) k-GROWTH — run indices are
+# inherently prefix-stable, so more runs add columns. A request for (these tasks × k runs)
+# fills only the cells it lacks (``evaluate(done_runs=...)``), then rebuilds every task's report
+# from the accumulator. The per-(n, k) RESULTS file is a snapshot gated by a CONTENT signature
+# (so a changed sample/judge can't be served stale); the accumulator behind it is shared.
+
+
+def _safe(s: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", s)
+
+
+def _signature(tasks: list, k: int, grader_id: str) -> str:
+    # Hash task CONTENT (id+prompt+gold), not just ids: ids are POSITIONAL (sqa_0, gsm_3…),
+    # so a changed sample maps the same id to a different question — folding content into the
+    # sig makes that change invalidate stale reuse (the prefix-stable sampler relies on this).
+    # grader_id carries the resolved model + judge pool, so a different grader never reuses.
+    payload = "||".join(f"{t.id}={t.prompt}=={t.note}" for t in sorted(tasks, key=lambda t: t.id))
+    return hashlib.sha1(f"k={k}|grader={grader_id}|{payload}".encode()).hexdigest()[:12]
+
+
+def _pick_judge(pool: list, agent_model: str, seed: int, task_id: str) -> str:
+    """Deterministically pick a judge for ``task_id`` from ``pool``, EXCLUDING the agent's own
+    model (no self-judging). Seeded by (seed, agent_model, task_id): reproducible, resume-stable,
+    and rotating across the task set for breadth. Candidates are SORTED so the choice depends only
+    on the pool's SET, not the argument order (matching the sorted pool in the checkpoint tag).
+    Falls back to the full pool only if exclusion empties it (pool == [agent_model])."""
+    cands = sorted(m for m in pool if m != agent_model) or sorted(pool)
+    h = int(hashlib.sha1(f"{seed}|{agent_model}|{task_id}".encode()).hexdigest(), 16)
+    return cands[h % len(cands)]
+
+
+def _csig(task) -> str:
+    """Per-task CONTENT fingerprint (prompt + gold). A cached cell is reused only when this
+    matches the current task's — so a changed sample (positional ids like ``gsm_3`` map to a
+    DIFFERENT question) or an edited gold can never silently serve a stale cell from the
+    n/k-independent accumulator."""
+    return hashlib.sha1(f"{task.prompt}=={task.note}".encode()).hexdigest()[:12]
+
+
+def _results_path(tag: str) -> str:
+    os.makedirs(RESULTS_ROOT, exist_ok=True)
+    return os.path.join(RESULTS_ROOT, _safe(tag) + ".json")
+
+
+def _load_saved(tag: str) -> dict:
+    p = _results_path(tag)
+    try:
+        return json.load(open(p)) if os.path.exists(p) else {}
+    except ValueError:
+        return {}                          # a truncated results file -> start clean
+
+
+def _save_saved(tag: str, saved: dict) -> None:
+    p = _results_path(tag)
+    tmp = p + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(saved, f, indent=2)
+    os.replace(tmp, p)                     # atomic: a kill mid-write can't corrupt it
+
+
+def _ckpt_path(tag: str, cond: str) -> str:
+    d = os.path.join(RESULTS_ROOT, "partial")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, _safe(f"{tag}__{cond}") + ".jsonl")
+
+
+def _load_ckpt(path: str) -> dict:
+    """Per-run checkpoint -> {case_id: {run_idx: record}}. A torn final line (crash
+    mid-write) or a line missing keys is skipped; later lines win on (id, run_idx), so
+    a re-run's fresh runs supersede stale partials of the same case."""
+    by_case: dict = defaultdict(dict)
+    if os.path.exists(path):
+        for line in open(path):
+            try:
+                o = json.loads(line)
+                by_case[o["id"]][int(o["run"])] = o
+            except (ValueError, KeyError, TypeError):
+                continue
+    return by_case
+
+
+def _ckpt_line(case: Case, rec: RunRecord, csig: str, samp: str = "") -> str:
+    """One checkpoint record: everything aggregate() needs to score a run WITHOUT the
+    agent — the verdict (detail), the answer (kappa + consistency), tokens, a persisted
+    tool-call count (so tool% survives trace-file cleanup), the task CONTENT fingerprint
+    ``csig`` (so a cell is only ever reused for the SAME question), and the ``samp`` sampling
+    regime (so a cell is only reused under the SAME temperature/top_p — see _samp_tag)."""
+    return json.dumps({"id": case.id, "run": rec.run, "detail": rec.detail,
+                       "answer": rec.answer, "tokens": rec.tokens,
+                       "tools": _trace_tool_calls(rec.trace_path), "csig": csig, "samp": samp,
+                       "trace_path": rec.trace_path, "error": rec.error})
+
+
+def _reconstruct(case_id: str, runs_by_idx: dict) -> CaseReport:
+    """Rebuild a CaseReport from checkpointed runs so a resumed case feeds aggregate()
+    exactly like a freshly-run one."""
+    recs = []
+    for ridx in sorted(runs_by_idx):
+        o = runs_by_idx[ridx]
+        rec = RunRecord(run=ridx, answer=o.get("answer", ""), score=0.0, passed=False,
+                        detail=o.get("detail", ""), stopped="cached",
+                        tokens=o.get("tokens"), trace_path=o.get("trace_path"),
+                        error=o.get("error"))
+        rec.tools = o.get("tools")         # aggregate prefers this over re-reading a trace
+        recs.append(rec)
+    return CaseReport(case_id, recs, _norm=_default_norm)
+
+
+def run_condition(cond, cases, tasks, task_by_id, client, model, k, *, pool_tag,
+                  resume: bool, samp_id: str = "", temperature=None, sampling=None) -> dict:
+    """Run one condition over a DURABLE cell ACCUMULATOR keyed by ``pool_tag`` (which excludes
+    n and k). Each ``(task_id, run_idx)`` cell is computed once and reused forever — across
+    crash-resume, n-growth (more tasks), AND k-growth (more runs): the checkpoint is the matrix,
+    and a request for (these tasks × k runs) fills only the cells it's missing. Then every task's
+    CaseReport is rebuilt from the accumulator in canonical task order (so the seeded bootstrap
+    CIs / paired-Δ markers are order-stable) before aggregating."""
+    ckpt = _ckpt_path(pool_tag, cond)
+    cells = _load_ckpt(ckpt) if resume else {}         # {task_id: {run_idx: cell}}
+    want = {t.id: _csig(t) for t in tasks}             # current content fingerprint per task
+
+    def _usable(cid, r):
+        """A cached cell counts as DONE only if it is for the SAME question (csig matches),
+        was produced under the SAME sampling regime (samp matches — legacy cells default to
+        ""), AND it did not error — so a changed sample/temperature never serves a stale cell,
+        and a transient gateway error is retried (the append-only checkpoint lets the retry
+        supersede it)."""
+        c = cells.get(cid, {}).get(r)
+        return (c is not None and c.get("csig") == want[cid]
+                and c.get("samp", "") == samp_id and not c.get("error"))
+
+    done_runs = {(t.id, r) for t in tasks for r in range(k) if _usable(t.id, r)}
+    n_done = sum(1 for t in tasks if all((t.id, r) in done_runs for r in range(k)))
+    if done_runs:
+        print(f"    {cond}: {n_done}/{len(tasks)} tasks complete at k={k} "
+              f"({len(done_runs)} cells reused) — filling the rest")
+    pf = open(ckpt, "a" if resume else "w")            # accumulator: append (or truncate on no-resume)
+
+    def _on_run(case, rec):
+        pf.write(_ckpt_line(case, rec, want[case.id], samp_id) + "\n")
+        pf.flush()                                     # durable per cell (sweep may be killed any time)
+
+    try:
+        evaluate(make_factory(cond, client, model, task_by_id,
+                              temperature=temperature, sampling=sampling), list(cases), k=k,
+                 trace_dir=os.path.join(TRACE_ROOT, cond),
+                 on_run=_on_run, done_runs=done_runs)   # run ONLY the missing/stale/errored cells
+    finally:
+        pf.close()
+    cells = _load_ckpt(ckpt)                            # reload: fresh cells now present (last-line-wins)
+    merged = [_reconstruct(t.id, {r: cells[t.id][r] for r in range(k)
+                                  if cells.get(t.id, {}).get(r, {}).get("csig") == want[t.id]
+                                  and cells.get(t.id, {}).get(r, {}).get("samp", "") == samp_id})
+              for t in tasks]                           # canonical task order; only same-question+sampling cells
+    return aggregate(cond, tasks, EvalReport(merged))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Agentic reliability + hallucination eval")
     ap.add_argument("--conditions", nargs="+", default=["baseline", "grounded"], choices=CONDITIONS)
     ap.add_argument("--categories", nargs="+", default=list(_CATS[:-1]))
     ap.add_argument("--k", type=int, default=3, help="independent runs per task")
     ap.add_argument("--model", default=None)
+    ap.add_argument("--judge-model", default=None,
+                    help="model for the LLM judge (default: --model). Set a stronger/separate judge to "
+                         "de-bias grading — a weak self-judge mis-grades free-form answers (see _JUDGE_PROMPT).")
+    ap.add_argument("--judge-pool", nargs="+", default=None,
+                    help="rotating peer-judge panel: per task a judge is sampled (seeded by task) from "
+                         "this pool EXCLUDING the agent's own model — no self-judging, breadth across the "
+                         "set. Overrides --judge-model. Use only validated flagships (see validate_judges).")
     ap.add_argument("--limit", type=int, default=0, help="cap tasks per category (0 = all)")
     ap.add_argument("--deterministic", action="store_true",
                     help="use the fast regex 3-way grader (a FLOOR) instead of the default LLM judge")
@@ -712,11 +974,22 @@ def main() -> None:
                     choices=["gsm8k", "truthfulqa", "simpleqa", "musique", "bfcl", "bfcl_irrelevance"],
                     help="ground the eval in real benchmark datasets instead of the built-in TASKS")
     ap.add_argument("--n", type=int, default=20, help="sample size per benchmark (with --benchmarks)")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="sample seed for --benchmarks (also keys the resume checkpoint)")
+    ap.add_argument("--no-resume", action="store_true",
+                    help="ignore saved results + checkpoints and run everything fresh")
+    ap.add_argument("--temperature", type=float, default=None,
+                    help="override sampling temperature for ALL agents (for a temperature SWEEP); "
+                         "default uses the per-model reasoning recipe. Recorded per cell + gated on "
+                         "reuse, so each temperature keeps its own accumulator.")
+    ap.add_argument("--top-p", type=float, default=None,
+                    help="override top_p (used with --temperature)")
     args = ap.parse_args()
 
     if args.benchmarks:
         import real_benchmarks as rb
-        tasks = [t for b in args.benchmarks for t in rb.LOADERS[b](args.n)]
+        tasks = [t for b in args.benchmarks for t in rb.LOADERS[b](args.n, seed=args.seed)]
+        src, size = "+".join(args.benchmarks), f"n{args.n}_s{args.seed}"
     else:
         tasks = [t for t in TASKS if t.category in args.categories]
         if args.limit:
@@ -727,15 +1000,47 @@ def main() -> None:
                     capped.append(t)
                     seen[t.category] += 1
             tasks = capped
+        src = "builtin-" + "+".join(args.categories)
+        size = f"lim{args.limit}" if args.limit else "all"
 
     client = make_client(model=args.model)
     model = args.model
-    classify_fn = classify if args.deterministic else \
-        (lambda task, ans: classify_hybrid(client, task, ans, model=model))
+    # resolve the REAL model (make_client falls back to GENAI_STUDIO_MODEL/qwen2.5:72b when
+    # --model is omitted), so the checkpoint namespace tracks the model actually run — never
+    # a literal 'default' that silently aliases two different models across resumes.
+    resolved_model = args.model or DEFAULT_MODEL
+    # judge pool: --judge-pool (rotating peer panel, self-excluded per task) overrides --judge-model;
+    # default is the single self/--judge-model judge for backward compatibility.
+    judge_pool = args.judge_pool or [args.judge_model or resolved_model]
+    grader_id = "det" if args.deterministic else "judge:" + "+".join(sorted(judge_pool))
+    if args.deterministic:
+        classify_fn = lambda task, ans: (classify(task, ans), None)
+    else:
+        def classify_fn(task, ans):
+            j = _pick_judge(judge_pool, resolved_model, args.seed, task.id)
+            return classify_hybrid(client, task, ans, model=j), j
     os.makedirs(TRACE_ROOT, exist_ok=True)
-    print(f"tasks={len(tasks)}  conditions={args.conditions}  k={args.k}  "
-          f"model={args.model or 'default'}  "
-          f"grader={'deterministic' if args.deterministic else 'hybrid(det+judge)'}")
+
+    # TWO identities: the RESULTS file is a per-(n, k) snapshot (watch CIs tighten as you grow);
+    # the cell ACCUMULATOR (pool_tag) excludes n AND k so n-growth and k-growth REUSE its cells.
+    # The signature (content + k + grader) gates snapshot reuse so a changed sample/judge can't be
+    # served stale.
+    grader_tag = _safe(grader_id)
+    run_temp, run_samp = _resolve_sampling(resolved_model, args.temperature, args.top_p)
+    samp_id = _samp_tag_for(run_temp, run_samp)        # gates cell reuse + carves the snapshot by sampling
+    samp_suffix = f"_{_safe(samp_id)}" if samp_id else ""
+    results_tag = _safe(f"{src}_{size}_k{args.k}_{resolved_model}_{grader_tag}") + samp_suffix
+    pool_tag = _safe(f"{src}_s{args.seed}_{resolved_model}_{grader_tag}")  # accumulator shared; samp gate separates regimes
+    sig = _signature(tasks, args.k, grader_id)
+    resume = not args.no_resume
+    saved = _load_saved(results_tag) if resume else {}
+
+    print(f"tasks={len(tasks)}  conditions={args.conditions}  k={args.k}  model={resolved_model}  "
+          f"grader={grader_id}")
+    if run_temp is not None or run_samp:
+        _src = "override" if args.temperature is not None else "reasoning-model recipe"
+        print(f"sampling: temperature={run_temp} {run_samp}  ({_src})")
+    print(f"resume={'on' if resume else 'off'}  results={results_tag}  accumulator={pool_tag}  sig={sig}")
 
     task_by_id = {t.id: t for t in tasks}
     cases = [Case(t.id, t.prompt,
@@ -743,10 +1048,19 @@ def main() -> None:
              for t in tasks]
     per_condition = {}
     for cond in args.conditions:
+        if resume and cond in saved and saved[cond].get("sig") == sig:
+            print(f"\n--- condition {cond}: reused from saved results (skip) ---")
+            per_condition[cond] = saved[cond]["agg"]
+            continue
         print(f"\n--- running condition: {cond} ---")
-        report = evaluate(make_factory(cond, client, model, task_by_id), list(cases), k=args.k,
-                          trace_dir=os.path.join(TRACE_ROOT, cond))
-        per_condition[cond] = aggregate(cond, tasks, report)
+        agg = run_condition(cond, cases, tasks, task_by_id, client, resolved_model, args.k,
+                            pool_tag=pool_tag, resume=resume, samp_id=samp_id,
+                            temperature=run_temp, sampling=run_samp)
+        per_condition[cond] = agg
+        saved[cond] = {"sig": sig, "agg": agg}
+        _save_saved(results_tag, saved)               # snapshot durably saved
+        # NOTE: the accumulator (pool_tag checkpoint) is deliberately NOT deleted — it is the
+        # durable cell store that n-growth and k-growth reuse.
 
     print_report(per_condition)
     print_deltas(per_condition)

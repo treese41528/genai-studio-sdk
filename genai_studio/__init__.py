@@ -192,7 +192,7 @@ from openai import OpenAI
 #
 # ════════════════════════════════════════════════════════════════════════════
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 
 # Base URL for Purdue's GenAI Studio instance
 # This runs Open WebUI with LiteLLM backend
@@ -3057,6 +3057,33 @@ Examples:
         "--collections", "-k", nargs="*", metavar="KB_ID",
         help="Knowledge base IDs for RAG-grounded chat"
     )
+    # ── agent command (interactive tool-using REPL) ─────────────────────
+    agent_parser = subparsers.add_parser(
+        "agent",
+        help="Interactive tool-using agent REPL (files, shell, web, data)"
+    )
+    agent_parser.add_argument("--model", "-m", type=str, default=None, metavar="MODEL",
+                              help="Model ID (defaults to the --preset's benchmark-chosen model)")
+    agent_parser.add_argument("--preset", choices=["fast", "balanced", "careful"], default=None,
+                              help="Benchmark-informed model+sampling preset (speed↔quality, like an "
+                                   "effort choice): fast=llama4:latest (quick/cheap), "
+                                   "balanced=qwen2.5:72b (default), careful=deepseek-r1:32b @greedy "
+                                   "(best calibration, lowest hallucination)")
+    agent_parser.add_argument("prompt", type=str, nargs="?",
+                              help="One-shot task (omit for an interactive session)")
+    agent_parser.add_argument("--system", "-s", type=str, metavar="PROMPT",
+                              help="Extra system prompt prepended to the agent's instructions")
+    agent_parser.add_argument("--profile", choices=["research", "coding", "general"],
+                              default="general", help="Tool profile (default: general)")
+    agent_parser.add_argument("--approval", choices=["suggest", "auto", "full"],
+                              default="suggest", help="Approval mode (default: suggest)")
+    agent_parser.add_argument("--sandbox", choices=["read-only", "workspace-write", "danger-full"],
+                              default="workspace-write", help="Sandbox policy (default: workspace-write)")
+    agent_parser.add_argument("--max-steps", type=int, default=25, metavar="N",
+                              help="Max tool/model steps per turn (default: 25)")
+    agent_parser.add_argument("--no-stream", action="store_true", help="Disable token streaming")
+    agent_parser.add_argument("--resume", nargs="?", const="__pick__", metavar="ID",
+                              help="Resume a prior session (omit ID to pick from a list)")
     # ── embed command ───────────────────────────────────────────────────
     embed_parser = subparsers.add_parser(
         "embed",
@@ -3178,6 +3205,9 @@ Examples:
             return cmd_models(ai, args)
         elif args.command == "chat":
             return cmd_chat(ai, args)
+        elif args.command == "agent":
+            from genai_studio.agents.repl import run_repl
+            return run_repl(ai, args)
         elif args.command == "embed":
             return cmd_embed(ai, args)
         elif args.command == "rag":
