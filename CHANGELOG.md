@@ -36,8 +36,9 @@ Code / Codex except MCP.
 - **`prettify`** (`repl/prettify.py`): the REPL now renders **LaTeX → Unicode** (`\frac{\pi^2}{4}` →
   `π²/4`, `\sqrt{3}` → `√3`, `\boxed{5}` → `【 5 】`, Greek/operators/super-/sub-scripts) and light
   **markdown → ANSI** (headers, bold, inline code, bullets) instead of dumping raw `$\boxed{…}$`.
-  Built-in (no dependency, fails open to raw text); uses `pylatexenc` (`[pretty]`) for fuller coverage
-  if installed. On by default; **`/pretty [on|off]`** toggles it.
+  Big-operator limits render as readable ranges — `\sum_{i=1}^{n}` → `∑[i=1..n]`, `\int_0^1` →
+  `∫[0..1]` — rather than cramped subscripts, and thin-spaces (`x\,dx` → `x dx`) are preserved.
+  Built-in, no dependency, fails open to raw text; on by default, **`/pretty [on|off]`** toggles it.
 
 ### Added — Lean 4 proving + a competition-math benchmark
 - **`lean_check`** (`tools/lean.py`): the model writes a Lean 4 theorem + proof, the Lean kernel

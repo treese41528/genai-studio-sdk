@@ -26,8 +26,8 @@ _GREEK = {"alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": 
           "Omega": "Ω"}
 _OPS = {"le": "≤", "leq": "≤", "ge": "≥", "geq": "≥", "ne": "≠", "neq": "≠", "approx": "≈",
         "equiv": "≡", "cong": "≅", "sim": "∼", "propto": "∝", "times": "×", "cdot": "·", "div": "÷",
-        "pm": "±", "mp": "∓", "ast": "∗", "star": "⋆", "circ": "∘", "infty": "∞", "sum": "∑",
-        "prod": "∏", "int": "∫", "oint": "∮", "partial": "∂", "nabla": "∇", "to": "→",
+        "pm": "±", "mp": "∓", "ast": "∗", "star": "⋆", "circ": "∘", "infty": "∞",
+        "partial": "∂", "nabla": "∇", "to": "→",
         "rightarrow": "→", "Rightarrow": "⇒", "leftarrow": "←", "Leftarrow": "⇐",
         "leftrightarrow": "↔", "mapsto": "↦", "in": "∈", "notin": "∉", "ni": "∋", "subset": "⊂",
         "subseteq": "⊆", "supset": "⊃", "supseteq": "⊇", "cup": "∪", "cap": "∩", "setminus": "∖",
@@ -36,7 +36,23 @@ _OPS = {"le": "≤", "leq": "≤", "ge": "≥", "geq": "≥", "ne": "≠", "neq"
         "angle": "∠", "perp": "⊥", "parallel": "∥", "deg": "°", "prime": "′", "ldots": "…",
         "cdots": "⋯", "dots": "…", "vdots": "⋮", "Re": "ℜ", "Im": "ℑ", "aleph": "ℵ", "hbar": "ℏ",
         "ell": "ℓ", "Box": "□", "bullet": "•", "quad": "  ", "qquad": "    "}
+# Big operators keep their limits as a READABLE range (∑[i=1..n]), not tiny cramped scripts.
+_BIGOP = {"sum": "∑", "prod": "∏", "coprod": "∐", "int": "∫", "iint": "∬", "iiint": "∭", "oint": "∮",
+          "bigcup": "⋃", "bigcap": "⋂", "bigoplus": "⨁", "bigotimes": "⨂", "bigvee": "⋁",
+          "bigwedge": "⋀", "limsup": "lim sup", "liminf": "lim inf", "lim": "lim", "max": "max",
+          "min": "min"}
 _BB = {"R": "ℝ", "N": "ℕ", "Z": "ℤ", "Q": "ℚ", "C": "ℂ", "P": "ℙ", "E": "𝔼"}
+
+
+def _bigop(m):
+    op, lo, hi = _BIGOP[m.group(1)], m.group(2), m.group(3)
+    if lo and hi:
+        return f"{op}[{lo}..{hi}] "
+    if lo:
+        return f"{op}[{lo}] "
+    if hi:
+        return f"{op}^({hi}) "
+    return op + " "
 
 
 def _map(text, table):
@@ -50,43 +66,41 @@ def _script(text, table, prefix):
     return f"{prefix}{text}" if len(text) == 1 else f"{prefix}({text})"
 
 
+_BIGOP_RE = (r"\\(sum|prod|coprod|iiint|iint|int|oint|bigcup|bigcap|bigoplus|bigotimes|bigvee|"
+             r"bigwedge|limsup|liminf|lim|max|min)(?:_\{([^{}]*)\})?(?:\^\{([^{}]*)\})?")
+
+
 def latex_to_unicode(s: str) -> str:
-    """Best-effort LaTeX → Unicode (built-in; no dependency)."""
+    """Best-effort LaTeX → Unicode (built-in; no dependency). Big-operator limits render as readable
+    ranges (``∑[i=1..n]``, ``∫[0..1]``) rather than cramped unicode scripts; short variable scripts
+    (``x²``, ``a₁``) stay as unicode. Fails open to the original text."""
     try:
-        return _pylatexenc(s)
-    except Exception:
-        pass
-    try:
-        for d in ("\\left", "\\right", "\\!", "\\,", "\\;", "\\:", "\\displaystyle", "$$", "$",
-                  "\\(", "\\)", "\\[", "\\]", "\\ "):
-            s = s.replace(d, " " if d in ("\\ ", "\\quad") else "")
-        s = re.sub(r"\\(?:text|mathrm|mathbf|mathit|operatorname)\{([^{}]*)\}", r"\1", s)
+        for d in ("\\left", "\\right", "\\!", "\\displaystyle", "\\limits", "\\nolimits"):
+            s = s.replace(d, "")
+        s = re.sub(r"\\[,;:> ]", " ", s)                       # thin/med spaces \, \; \: -> a space
+        for d in ("$$", "$", "\\(", "\\)", "\\[", "\\]"):
+            s = s.replace(d, "")
+        s = re.sub(r"\^\{?\\circ\}?", "°", s)                  # degrees
+        s = re.sub(r"\\(?:text|mathrm|mathbf|mathit|mathsf|operatorname)\{([^{}]*)\}", r"\1", s)
         s = re.sub(r"\\mathbb\{([A-Z])\}", lambda m: _BB.get(m.group(1), m.group(1)), s)
-        for _ in range(3):                                     # a few passes for nested braces
+        # Greek + operators (NOT big operators, whose limits we format specially below)
+        s = re.sub(r"\\([A-Za-z]+)",
+                   lambda m: _GREEK.get(m.group(1)) or _OPS.get(m.group(1)) or m.group(0), s)
+        s = re.sub(r"([_^])\s*([^{\s\\])", r"\1{\2}", s)       # normalise single scripts to braces
+        for _ in range(2):                                     # big operators + their limits
+            s = re.sub(_BIGOP_RE, _bigop, s)
+        for _ in range(4):                                     # nested boxed/frac/sqrt/scripts
             s = re.sub(r"\\boxed\{([^{}]*)\}", r"【 \1 】", s)
-            s = re.sub(r"\\sqrt\[([^\]]*)\]\{([^{}]*)\}", lambda m: f"{_map(m.group(1), _SUP)}√({m.group(2)})", s)
+            s = re.sub(r"\\sqrt\[([^\]]*)\]\{([^{}]*)\}",
+                       lambda m: f"{_map(m.group(1), _SUP)}√({m.group(2)})", s)
             s = re.sub(r"\\sqrt\{([^{}]*)\}", r"√(\1)", s)
             s = re.sub(r"\\(?:d|t)?frac\{([^{}]*)\}\{([^{}]*)\}", r"\1/\2", s)
             s = re.sub(r"\^\{([^{}]*)\}", lambda m: _script(m.group(1), _SUP, "^"), s)
             s = re.sub(r"_\{([^{}]*)\}", lambda m: _script(m.group(1), _SUB, "_"), s)
-        s = re.sub(r"\^(\w)", lambda m: _script(m.group(1), _SUP, "^"), s)
-        s = re.sub(r"_(\w)", lambda m: _script(m.group(1), _SUB, "_"), s)
-        s = re.sub(r"\\([A-Za-z]+)",
-                   lambda m: _GREEK.get(m.group(1)) or _OPS.get(m.group(1)) or m.group(0), s)
-        return s.replace("{", "").replace("}", "").replace("\\", "")
+        s = s.replace("{", "").replace("}", "").replace("\\", "")
+        return re.sub(r"  +", " ", s)                          # collapse doubled spaces
     except Exception:
         return s
-
-
-def _pylatexenc(s: str) -> str:
-    from pylatexenc.latex2text import LatexNodes2Text          # optional, fuller coverage
-    # only run it on math spans so prose/markdown is untouched
-    def conv(m):
-        return LatexNodes2Text().latex_to_text(m.group(1))
-    out = re.sub(r"\$([^$]+)\$", conv, s)
-    out = re.sub(r"\\\[(.+?)\\\]", conv, out, flags=re.S)
-    out = re.sub(r"\\\((.+?)\\\)", conv, out)
-    return out
 
 
 def markdown_to_ansi(s: str, color: bool = True) -> str:

@@ -17,6 +17,15 @@ def test_latex_common_math():
     assert latex_to_unicode(r"$a_{ij} \times 10^{-2}$") == "aᵢⱼ × 10⁻²"
 
 
+def test_latex_big_operators_as_readable_ranges():
+    # limits render as ranges, not cramped subscripts; thin-space \, becomes a real space
+    assert latex_to_unicode(r"$\sum_{i=1}^{n} i$") == "∑[i=1..n] i"
+    assert latex_to_unicode(r"$\int_0^1 x\,dx$") == "∫[0..1] x dx"
+    assert latex_to_unicode(r"$\prod_{k=1}^{n} k$") == "∏[k=1..n] k"
+    assert latex_to_unicode(r"$\lim_{x \to 0} f$") == "lim[x → 0] f"
+    assert latex_to_unicode(r"$\int_{-\infty}^{\infty} e^{-x^2}\,dx$") == "∫[-∞..∞] e^(-x²) dx"
+
+
 def test_markdown_plain_when_no_color():
     out = markdown_to_ansi("# Title\n**bold** `code`\n- one", color=False)
     assert "Title" in out and "bold" in out and "\033[" not in out and "• one" in out
