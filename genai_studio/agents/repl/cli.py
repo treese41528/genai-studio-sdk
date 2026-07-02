@@ -208,7 +208,7 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
         resume_cmd(ctx, "" if args.resume == "__pick__" else args.resume)
 
     if getattr(args, "prompt", None):                # one-shot mode
-        ctx.history = _run_turn(agent, args.prompt, ctx.history, recorder, args.prompt, ctx.pretty)
+        _turn(ctx, args.prompt, args.prompt)
         recorder.close()
         return 0
 
@@ -234,9 +234,9 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
                     break
                 if res.prompt is None:
                     continue
-                ctx.history = _run_turn(agent, res.prompt, ctx.history, recorder, line, ctx.pretty)
+                _turn(ctx, res.prompt, line)
                 continue
-            ctx.history = _run_turn(agent, line, ctx.history, recorder, line, ctx.pretty)
+            _turn(ctx, line, line)
     finally:
         recorder.close()
     print("Goodbye.")
@@ -261,11 +261,32 @@ def _run_turn(agent, text, history, recorder=None, raw=None, pretty=True) -> lis
         except Exception:
             pass
         renderer.abort()
-        return history                       # discard the forcibly-aborted turn
+        return history, None                 # discard the forcibly-aborted turn
     res = renderer.result
     if res is None:
-        return history
+        return history, None
     new_history = [m for m in res.messages if getattr(m, "role", None) != "system"]
     if recorder is not None:
         recorder.write_messages(new_history[n0:], res)
+    return new_history, res
+
+
+def _turn(ctx, text, raw=None) -> list:
+    """One turn + per-session bookkeeping (undo marks, last prompt, cumulative token usage)."""
+    ctx.turn_marks = getattr(ctx, "turn_marks", [])
+    ctx.turn_marks.append(len(ctx.history))
+    ctx.last_prompt = text
+    new_history, res = _run_turn(ctx.agent, text, ctx.history, ctx.recorder, raw, ctx.pretty)
+    if res is None:
+        if ctx.turn_marks:
+            ctx.turn_marks.pop()             # aborted/empty turn — drop its mark
+    else:
+        u = getattr(res, "usage", None)
+        if u is not None:
+            t = getattr(ctx, "total_usage", None) or {"prompt": 0, "completion": 0, "total": 0}
+            t["prompt"] += getattr(u, "prompt_tokens", 0) or 0
+            t["completion"] += getattr(u, "completion_tokens", 0) or 0
+            t["total"] += getattr(u, "total_tokens", 0) or 0
+            ctx.total_usage = t
+    ctx.history = new_history
     return new_history

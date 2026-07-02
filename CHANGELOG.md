@@ -21,6 +21,11 @@ MCP client — connect to external MCP servers, gated (P1: stdio + tools).
   one call; `mcp=None` is byte-identical (no MCP import).
 - **REPL splash** — a framed, welcoming banner (version + tagline, aligned session info, a capability
   summary instead of a raw tool dump, and next-step hints).
+- **REPL commands (17 → 27)** + **Tab-cycling slash completion** (`menu-complete`, Shift-Tab backward,
+  custom commands included): `/cost`, `/retry`, `/undo`, `/preset`, `/profile`, `/export`, `/reload`,
+  `/mcp`, `/verify` (critic-panel the last answer), `/doctor` (env + gateway health). `/init` now writes
+  **`AGENTS.md`** (vendor-neutral) rather than `CLAUDE.md` (both still auto-loaded).
+- **`prove` shows a proof** — factors the difference (`x²+y²−2xy = (x−y)² ≥ 0`), not just "PROVEN".
 
 ### Changed
 - **Python floor raised to `>=3.10`** (3.9 is EOL; required by the MCP SDK).

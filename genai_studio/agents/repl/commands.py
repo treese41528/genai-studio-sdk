@@ -266,6 +266,183 @@ def _init(ctx, arg):
     return CommandResult()
 
 
+def _cost(ctx, arg):
+    """Show cumulative token usage this session (gateway billing is local/free)."""
+    u = getattr(ctx, "total_usage", None)
+    turns = len(getattr(ctx, "turn_marks", []))
+    if not u or not u.get("total"):
+        print("(no token usage recorded yet)")
+        return CommandResult()
+    print(f"session usage: {u['total']:,} tokens  ({u['prompt']:,} prompt + {u['completion']:,} "
+          f"completion) over {turns} turn(s)")
+    return CommandResult()
+
+
+def _retry(ctx, arg):
+    """Re-run the last prompt (drops its previous turn first)."""
+    lp = getattr(ctx, "last_prompt", None)
+    if not lp:
+        print("(nothing to retry)")
+        return CommandResult()
+    marks = getattr(ctx, "turn_marks", [])
+    if marks:
+        ctx.history[:] = ctx.history[:marks.pop()]      # replace the previous attempt
+    print(f"(retrying) {lp[:70]}")
+    return CommandResult(prompt=lp)
+
+
+def _undo(ctx, arg):
+    """Drop the last turn from the conversation history."""
+    marks = getattr(ctx, "turn_marks", [])
+    if not marks:
+        print("(nothing to undo)")
+        return CommandResult()
+    mark = marks.pop()
+    removed = len(ctx.history) - mark
+    ctx.history[:] = ctx.history[:mark]
+    print(f"(undid last turn — removed {removed} message(s); {len(ctx.history)} left)")
+    return CommandResult()
+
+
+def _preset(ctx, arg):
+    """Switch the speed/quality preset (model + sampling) live: /preset fast|balanced|careful."""
+    from ..presets import PRESETS, resolve_preset
+    a = (arg or "").strip().lower()
+    if a not in PRESETS:
+        print(f"usage: /preset [{'|'.join(PRESETS)}]   (current model: {ctx.agent.model})")
+        return CommandResult()
+    model, temp, sampling = resolve_preset(a, None)
+    ctx.agent.model, ctx.agent.temperature, ctx.agent.sampling = model, temp, sampling
+    print(f"preset → {a}: model={model}" + ("  · greedy" if temp == 0.0 else ""))
+    return CommandResult()
+
+
+def _export(ctx, arg):
+    """Save the transcript to a markdown file: /export [path]."""
+    path = Path(arg.strip()) if (arg or "").strip() else ctx.cwd / "genai-session.md"
+    lines = ["# genai-studio session\n"]
+    for m in ctx.history:
+        role = getattr(m, "role", "?")
+        if role == "system":
+            continue
+        content = (getattr(m, "content", "") or "").strip()
+        calls = getattr(m, "tool_calls", None)
+        if not content and calls:
+            content = "(tool call: " + ", ".join(getattr(c, "name", "?") for c in calls) + ")"
+        if content:
+            lines.append(f"\n### {role}\n\n{content}\n")
+    try:
+        path.write_text("\n".join(lines), encoding="utf-8")
+        print(f"(exported {len(ctx.history)} message(s) → {path})")
+    except OSError as e:
+        print(f"(export failed: {e})")
+    return CommandResult()
+
+
+def _reload(ctx, arg):
+    """Reload file-based custom commands + project memory without restarting."""
+    from .memory import build_system_prompt, load_project_memory
+    n = load_custom_into(ctx.registry, ctx.cwd)
+    mem, files = load_project_memory(ctx.cwd)
+    ctx.agent.system = build_system_prompt(ctx.base_system, mem)
+    print(f"(reloaded: +{n} custom command(s), {len(files)} memory file(s); skills reload per call)")
+    return CommandResult()
+
+
+def _mcp(ctx, arg):
+    """List configured MCP servers and the MCP tools active this session."""
+    active = [t.name for t in ctx.tools if getattr(t, "name", "").startswith("mcp__")]
+    try:
+        from ..mcp.config import load_mcp_config
+        cfgs = load_mcp_config(None)
+    except Exception:
+        cfgs = []
+    if not cfgs and not active:
+        print("(no MCP servers — add .genai_studio/mcp.json, then start with mcp=/allow_stdio)")
+        return CommandResult()
+    print(f"MCP servers configured ({len(cfgs)}):")
+    for c in cfgs:
+        print(f"  {c.name}  [{c.transport}]  {c.command or c.url or '?'}")
+    print(f"active MCP tools ({len(active)}): " + (", ".join(active) or "(none connected this session)"))
+    return CommandResult()
+
+
+def _verify(ctx, arg):
+    """Run an adversarial critic panel on a claim (defaults to the last answer): /verify [claim]."""
+    from ..panel import critic_panel
+    claim = (arg or "").strip() or next(
+        (getattr(m, "content", "") for m in reversed(ctx.history)
+         if getattr(m, "role", None) == "assistant" and (getattr(m, "content", "") or "").strip()), "")
+    if not claim:
+        print("usage: /verify [claim]  (defaults to the last answer)")
+        return CommandResult()
+    print("(running an adversarial critic panel…)")
+    try:
+        v = critic_panel(ctx.client, claim, n=3)
+    except Exception as e:
+        print(f"(verify failed: {e})")
+        return CommandResult()
+    print(f"verdict: {'UPHELD ✓' if v.survived else 'REFUTED ✗'}  "
+          f"({v.n_refute} refute / {v.n_uphold} uphold / {v.n_abstain} abstain)")
+    for vote in v.votes:
+        tag = "REFUTE" if vote.refuted else "ABSTAIN" if vote.abstained else "UPHOLD"
+        print(f"  [{vote.lens}] {tag}: {vote.reason}")
+    return CommandResult()
+
+
+def _doctor(ctx, arg):
+    """Environment + gateway health check."""
+    import importlib.util as iu
+    print("environment:")
+    for label, mod in (("[math] sympy", "sympy"), ("[smt] z3", "z3"), ("[mcp] mcp", "mcp"),
+                       ("[datascience] pandas", "pandas"), ("[structured] pydantic", "pydantic")):
+        print(f"  {'✓' if iu.find_spec(mod) else '·'} {label}")
+    try:
+        from ..tools.lean import lean_available
+        print(f"  {'✓' if lean_available() else '·'} Lean toolchain (lean_check)")
+    except Exception:
+        pass
+    try:
+        from ..client import Message
+        msg = Message.user("ping") if hasattr(Message, "user") else Message(role="user", content="ping")
+        ctx.client.complete([msg], model=ctx.agent.model, max_tokens=1)
+        print("  ✓ gateway reachable")
+    except Exception as e:
+        print(f"  · gateway: {type(e).__name__}: {str(e)[:60]}")
+    print(f"session: model={ctx.agent.model}  tools={len(ctx.tools)}  history={len(ctx.history)} msgs")
+    return CommandResult()
+
+
+def _profile(ctx, arg):
+    """Switch the tool profile live (best-effort rebuild): /profile research|coding|general."""
+    a = (arg or "").strip().lower()
+    if a not in ("research", "coding", "general"):
+        print("usage: /profile [research|coding|general]")
+        return CommandResult()
+    cfg = ctx.approval_config
+    try:
+        from ..compose import wire_capabilities
+        from ..profiles import build_tools
+        from ..tool import ToolRegistry
+        base, approval_guard, newcfg = build_tools(
+            a, workspace_root=ctx.cwd, mode=cfg.mode, sandbox=cfg.sandbox, prompt_fn=cfg.prompt_fn)
+        tools, _blocks, tool_search, _ = wire_capabilities(
+            base, cwd=ctx.cwd, client=ctx.client, model=ctx.agent.model,
+            memory_dir=getattr(ctx.cfg, "memory_dir", None), shared_guards=[approval_guard])
+        ctx.tools = tools
+        ctx.agent.tools = tools
+        ctx.agent._registry = ToolRegistry(tools)
+        ctx.agent.tool_search = tool_search
+        if tool_search is not None:
+            ctx.agent._setup_deferred()
+        ctx.agent.guards = [approval_guard]
+        ctx.approval_config = newcfg
+        print(f"profile → {a}  ({len(tools)} tools)")
+    except Exception as e:
+        print(f"(could not switch profile live: {e}; restart with --profile {a})")
+    return CommandResult()
+
+
 def _quit(ctx, arg):
     return CommandResult(is_exit=True)
 
@@ -283,10 +460,20 @@ _BUILTINS = [
     ("plan", "toggle plan mode (read-only explore + propose)", _plan, None),
     ("approvals", "show or set approval mode", _approvals, "[suggest|auto|full]"),
     ("status", "show session status", _status, None),
+    ("cost", "show session token usage", _cost, None),
     ("init", "write a starter AGENTS.md and load it", _init, None),
     ("diff", "show the working-tree git diff", _diff, None),
     ("resume", "resume a prior session", _resume, "[id]"),
     ("compact", "summarize history to free up context", _compact, None),
+    ("retry", "re-run the last prompt", _retry, None),
+    ("undo", "drop the last turn", _undo, None),
+    ("preset", "switch speed/quality preset (model+sampling)", _preset, "[fast|balanced|careful]"),
+    ("profile", "switch tool profile", _profile, "[research|coding|general]"),
+    ("export", "save the transcript to markdown", _export, "[path]"),
+    ("reload", "reload custom commands + memory", _reload, None),
+    ("mcp", "list MCP servers and tools", _mcp, None),
+    ("verify", "critic-panel the last answer", _verify, "[claim]"),
+    ("doctor", "environment + gateway health check", _doctor, None),
     ("quit", "exit the session", _quit, None),
 ]
 
