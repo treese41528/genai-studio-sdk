@@ -9,8 +9,9 @@ MCP client — connect to external MCP servers, gated (P1: stdio + tools).
 ### Added
 - **MCP client** (`genai_studio/agents/mcp/`, `[mcp]` extra, official SDK, lazy-imported): connect to
   MCP servers over **stdio**, snapshot `tools/list`, and expose them to the Agent. `mcp_tools(config,
-  allow_stdio=True)` → `(tools, MCPManager)`; or `assemble_agent(mcp=…)` wires + attaches it.
-  Fail-open on discovery (a dead server → zero tools, never crashes the build).
+  allow_stdio=True)` → `(tools, MCPManager)`; `assemble_agent(mcp=…)`; or in the REPL via
+  **`--mcp <config.json>`** (or an auto-loaded `./.genai_studio/mcp.json`) + **`--allow-stdio`**, with
+  `/mcp` listing the live tools. Fail-open on discovery (a dead server → zero tools, never crashes).
 - **Untrusted-by-construction security:** every tool is namespaced `mcp__<server>__<tool>`, which keeps
   it out of the approval allowlists so `assess()` returns `_ASK` **before** the session-allow cache —
   MCP tools **always re-prompt**, and a cached "always" grant can't survive a rug-pulled definition.

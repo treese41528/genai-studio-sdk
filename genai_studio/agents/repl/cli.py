@@ -176,6 +176,25 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
     base_system = BASE_SYSTEM if not getattr(args, "system", None) else args.system + "\n\n" + BASE_SYSTEM
     mem_text, mem_files = load_project_memory(cwd)
 
+    # Optional MCP servers (external tools, GATED). --mcp <config> or an auto-loaded
+    # ./.genai_studio/mcp.json; stdio spawning requires --allow-stdio. FAIL-OPEN: a bad/unreachable
+    # server logs and contributes no tools. Tools are appended before wire_capabilities so they flow
+    # through the same registry/dedup/defer path; the guard is prepended below.
+    mcp_mgr = None
+    mcp_source = getattr(args, "mcp", None)
+    if mcp_source is not None or (cwd / ".genai_studio" / "mcp.json").is_file():
+        try:
+            from ..mcp import mcp_tools
+            mcp_list, mcp_mgr = mcp_tools(mcp_source, allow_stdio=getattr(args, "allow_stdio", False))
+            tools = [*tools, *mcp_list]
+            if mcp_list:
+                print(f"MCP: connected {len(mcp_list)} tool(s) — {', '.join(t.name for t in mcp_list[:6])}"
+                      + (" …" if len(mcp_list) > 6 else ""))
+            elif not getattr(args, "allow_stdio", False):
+                print("MCP: servers configured but stdio spawning is off — pass --allow-stdio to connect.")
+        except Exception as e:
+            print(f"(MCP setup skipped: {e})")
+
     # Skills (P0 in-context tier): discover .genai_studio/skills, add the use_skill meta-tool,
     # and inject the always-on catalog alongside project memory via the single assemble_system point.
     # Skills + recall-memory via the SAME shared wiring path as the headless assemble_agent.
@@ -195,9 +214,12 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
                  if (mem_text or "").strip() else "")
     # priority order: base -> AGENTS.md -> recalled facts -> skills catalog
     system = assemble_system(base_system, mem_block, *cap_blocks)
+    guards = [mcp_mgr.guard, approval_guard] if mcp_mgr else [approval_guard]   # MCP allowlist first
     agent = Agent(client=client, tools=tools, system=system, tracer=NullTracer(),
-                  guards=[approval_guard], model=model, max_steps=cfg.max_steps,
+                  guards=guards, model=model, max_steps=cfg.max_steps,
                   tool_search=tool_search, temperature=temperature, sampling=sampling)
+    if mcp_mgr is not None:
+        agent._closeables.append(mcp_mgr)                # agent.close() tears the MCP servers down
 
     recorder = SessionRecorder(cfg.sessions_dir, model=model, cwd=cwd)
     registry = build_registry()
@@ -212,6 +234,7 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
 
     if getattr(args, "prompt", None):                # one-shot mode
         _turn(ctx, args.prompt, args.prompt)
+        agent.close()                                # tear down MCP servers, if any
         recorder.close()
         return 0
 
@@ -241,6 +264,7 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
                 continue
             _turn(ctx, line, line)
     finally:
+        agent.close()                                # tear down MCP servers, if any
         recorder.close()
     print("Goodbye.")
     return 0

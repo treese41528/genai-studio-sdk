@@ -3084,6 +3084,13 @@ Examples:
     agent_parser.add_argument("--no-stream", action="store_true", help="Disable token streaming")
     agent_parser.add_argument("--resume", nargs="?", const="__pick__", metavar="ID",
                               help="Resume a prior session (omit ID to pick from a list)")
+    agent_parser.add_argument("--mcp", metavar="CONFIG", default=None,
+                              help="Connect MCP servers from a config JSON path (or auto-load "
+                                   "./.genai_studio/mcp.json). Their tools are gated: namespaced "
+                                   "mcp__server__tool, always approval-prompted, allowlisted by an MCPGuard.")
+    agent_parser.add_argument("--allow-stdio", action="store_true",
+                              help="Permit spawning stdio MCP servers (arbitrary local subprocesses); "
+                                   "required to actually launch a --mcp stdio server.")
     # ── embed command ───────────────────────────────────────────────────
     embed_parser = subparsers.add_parser(
         "embed",
