@@ -118,6 +118,13 @@ def _valid(P, roots, tol=1e-9):
     return True
 
 
+def _complete(P, roots):
+    """Validity PLUS completeness: exactly ``deg P`` distinct valid roots. Sound because a degree-d
+    polynomial has at most d roots, so d distinct valid roots means we've found them all — still just
+    substitute-and-count, no solving."""
+    return _valid(P, roots) and len({_canon(r) for r in roots}) == int(sympy.degree(P))
+
+
 def _correct(roots, gold):
     return _key(roots) == _key(gold)
 
@@ -150,40 +157,42 @@ def main():
           f"degrees={degrees}\n", flush=True)
 
     from collections import defaultdict
-    cell = defaultdict(lambda: {"bare": 0, "maj": 0, "filtered": 0, "passk": 0, "n": 0, "filt": 0})
+    arms = ("bare", "maj", "filt_v", "filt_c", "passk")
+    cell = defaultdict(lambda: {a: 0 for a in arms} | {"n": 0})
     for i, pr in enumerate(probs, 1):
         P, gold = pr["P"], pr["gold"]
         deg = int(sympy.degree(P))
         bare = _extract(_solve(pr["problem"], client, args.model, 0.0, args.wall))
         samples = [_extract(_solve(pr["problem"], client, args.model, args.temp, args.wall))
                    for _ in range(args.k)]
-        survivors = [s for s in samples if _valid(P, s)]
+        surv_v = [s for s in samples if _valid(P, s)]        # validity filter
+        surv_c = [s for s in samples if _complete(P, s)]     # completeness filter
         picks = {"bare": bare, "maj": _vote(samples),
-                 "filtered": _vote(survivors) if survivors else _vote(samples)}
+                 "filt_v": _vote(surv_v) if surv_v else _vote(samples),
+                 "filt_c": _vote(surv_c) if surv_c else _vote(samples)}
         c = cell[deg]
         c["n"] += 1
-        c["filt"] += len(samples) - len(survivors)
         line = f"[{i:>3}/{args.n}] deg{deg}"
-        for arm in ("bare", "maj", "filtered"):
+        for arm in ("bare", "maj", "filt_v", "filt_c"):
             ok = _correct(picks[arm], gold)
             c[arm] += ok
-            line += f"  {arm[:4]}={'✓' if ok else '·'}"
+            line += f"  {arm}={'✓' if ok else '·'}"
         c["passk"] += any(_correct(s, gold) for s in samples)
-        line += f"  (filt {len(samples)-len(survivors)}/{len(samples)})  gold={sorted(int(g) for g in gold)}"
+        line += f"  (v{len(surv_v)}/c{len(surv_c)} of {len(samples)})  gold={sorted(int(g) for g in gold)}"
         print(line, flush=True)
 
-    tot = {k: sum(c[k] for c in cell.values()) for k in ("bare", "maj", "filtered", "passk", "n", "filt")}
+    tot = {a: sum(c[a] for c in cell.values()) for a in arms} | {"n": sum(c["n"] for c in cell.values())}
 
     def _row(name, c):
         n = c["n"] or 1
-        return (f"  {name:>7} (n={c['n']:>2}): bare {c['bare']/n:5.0%} | maj {c['maj']/n:5.0%} | "
-                f"filt {c['filtered']/n:5.0%} | pass@k {c['passk']/n:5.0%} | "
-                f"FILTER-LIFT {(c['filtered']-c['maj'])/n:+5.0%} | filtered {c['filt']/(n*args.k):3.0%}")
+        return (f"  {name:>7} (n={c['n']:>2}): bare {c['bare']/n:4.0%} | maj {c['maj']/n:4.0%} | "
+                f"filt-valid {c['filt_v']/n:4.0%} | filt-COMPLETE {c['filt_c']/n:4.0%} | "
+                f"pass@k {c['passk']/n:4.0%}")
 
-    print("\n=== PER-DEGREE (where does the filter win?) ===")
+    print("\n=== PER-DEGREE: validity filter vs COMPLETENESS filter vs the pass@k ceiling ===")
     for d in sorted(cell):
         print(_row(f"deg {d}", cell[d]))
-    print("  " + "-" * 96)
+    print("  " + "-" * 100)
     print(_row("ALL", tot))
 
 
