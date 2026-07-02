@@ -67,3 +67,28 @@ def make_lean_check(*, lean: str = "lean", timeout: float = 40):
         return ToolResult(content=f"NOT proven — Lean reported:\n{out[:2000]}", data={"ok": False})
 
     return lean_check
+
+
+def make_grade_proof(*, lean: str = "lean", timeout: float = 40):
+    """Return ``grade_proof`` — grade a submitted proof CERTIFICATE against a claim. The claim (a Lean
+    proposition) and the proof (a term or ``by`` block) are given SEPARATELY, assembled into a theorem,
+    and kernel-checked. This is the *check≪solve* proof arm: verifying a candidate proof is far cheaper
+    than producing one, so propose several and keep the one the kernel accepts."""
+    checker = make_lean_check(lean=lean, timeout=timeout)
+
+    @tool
+    def grade_proof(claim: str, proof: str, imports: str = "") -> ToolResult:
+        """Grade a Lean 4 proof CERTIFICATE: assemble ``theorem _ : <claim> := <proof>`` and check it
+        with the Lean kernel. SOUND — the kernel cannot be fooled. Verifying a proof is cheaper than
+        finding one, so you can propose several candidate proofs and keep the accepted one.
+
+        Args:
+            claim: the proposition, e.g. "2 + 2 = 4", "∀ n : Nat, n + 0 = n".
+            proof: the proof — a term or ``by`` block, e.g. "by decide", "by omega", "fun n => rfl".
+            imports: optional import lines (e.g. "import Mathlib") when the proof needs them.
+        """
+        head = (imports.strip() + "\n") if imports.strip() else ""
+        code = f"{head}theorem grade_thm : {claim} := {proof.strip()}\n"
+        return checker.run({"code": code})
+
+    return grade_proof

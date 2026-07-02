@@ -45,16 +45,16 @@ def build_tools(profile: str = "general", *, workspace_root=None,
     from .tools.plan import make_plan_tool
     from .tools.search import make_search_tools
     from .tools.smt import prove, solve_constraints
-    from .tools.symbolic import matrix_op, symbolic_math, verify_math
+    from .tools.symbolic import matrix_op, symbolic_math, verify_factorization, verify_math
     file_tools = make_file_tools(ws)                # [read_file, write_file, edit_file]
     read_file = file_tools[0]
     search = make_search_tools(ws)                  # [grep, glob] — read-only codebase exploration
     plan = [make_plan_tool()]                       # [update_plan] — working-memory task list
     # exact CAS grounding ([math]) + sound theorem proving over arithmetic ([smt]); lazy-imported
-    math = [verify_math, symbolic_math, matrix_op, prove, solve_constraints]
-    from .tools.lean import lean_available, make_lean_check
+    math = [verify_math, verify_factorization, symbolic_math, matrix_op, prove, solve_constraints]
+    from .tools.lean import lean_available, make_grade_proof, make_lean_check
     if lean_available():                            # kernel-checked proving (only if Lean 4 present)
-        math = math + [make_lean_check()]
+        math = math + [make_lean_check(), make_grade_proof()]
     coding = list(file_tools)
     from .tools.patch import make_patch_tool
     coding.append(make_patch_tool(ws))              # apply_patch — multi-hunk atomic edits

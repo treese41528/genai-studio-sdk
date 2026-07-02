@@ -149,6 +149,45 @@ def verify_math(claim: str, assume: str | None = None, tol: float = 1e-12) -> To
                       "(for an integer-only claim try prove(domain='int'))", data={"verdict": None})
 
 
+def is_factorization(expression: str, factored: str) -> bool:
+    """True iff ``factored`` is algebraically equal to ``expression`` AND is genuinely factored
+    (a product/power, not the expanded polynomial re-stated). Sound; the checker behind the
+    ``check≪solve`` factorization arm (see :mod:`genai_studio.agents.verified`)."""
+    try:
+        sp = _sp()
+        E, F = _parse(expression), _parse(factored)
+        return bool(sp.simplify(E - F) == 0 and (F.is_Mul or F.is_Pow) and sp.expand(F) != F)
+    except Exception:
+        return False
+
+
+@tool
+def verify_factorization(expression: str, factored: str) -> ToolResult:
+    """Verify a claimed FACTORIZATION: does ``factored`` expand back to ``expression`` AND is it
+    genuinely factored (a product/power, not the polynomial merely restated)? Sound — CHECK a
+    factorization before trusting it. Verifying is far cheaper than factoring, so when unsure you can
+    propose several candidate factorizations and keep only the one this accepts.
+
+    Args:
+        expression: the original expression, e.g. "x**2 - 1", "x**3 - 8", "x**2 + 5*x + 6".
+        factored: the claimed factorization, e.g. "(x-1)*(x+1)", "(x-2)*(x**2+2*x+4)", "(x+2)*(x+3)".
+    """
+    sp = _sp()
+    try:
+        E, F = _parse(expression), _parse(factored)
+    except Exception as e:
+        return ToolResult(content="", error=f"could not parse: {e}")
+    if sp.simplify(E - F) != 0:
+        return ToolResult(content=f"INVALID: {sp.sstr(F)} expands to {sp.sstr(sp.expand(F))}, "
+                          f"not {sp.sstr(sp.expand(E))}", data={"verdict": False, "reason": "not-equal"})
+    if not (F.is_Mul or F.is_Pow) or sp.expand(F) == F:
+        return ToolResult(content=f"NOT FACTORED: {sp.sstr(F)} equals {sp.sstr(E)} but is not a "
+                          "product — give a factored form like (x-1)*(x+1)",
+                          data={"verdict": False, "reason": "not-factored"})
+    return ToolResult(content=f"VALID factorization: {sp.sstr(E)} = {sp.sstr(F)}",
+                      data={"verdict": True})
+
+
 @tool
 def symbolic_math(operation: str, expression: str, symbol: str = "x", point: str | None = None,
                   lower: str | None = None, upper: str | None = None, order: int = 1,

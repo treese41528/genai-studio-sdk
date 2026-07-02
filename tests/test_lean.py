@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 import genai_studio.agents.tools.lean as L
-from genai_studio.agents.tools.lean import lean_available, make_lean_check
+from genai_studio.agents.tools.lean import lean_available, make_grade_proof, make_lean_check
 
 _needs_lean = pytest.mark.skipif(lean_available() is None, reason="Lean 4 toolchain not installed")
 
@@ -38,3 +38,11 @@ def test_clear_error_when_lean_absent(monkeypatch):
     monkeypatch.setattr(L, "lean_available", lambda lean="lean": None)
     r = make_lean_check().run({"code": "theorem t : True := trivial"})
     assert r.error and "not installed" in r.error
+
+
+@_needs_lean
+def test_grade_proof_grades_a_certificate():
+    grade = make_grade_proof()
+    assert grade.run({"claim": "2 + 2 = 4", "proof": "by decide"}).data["ok"] is True
+    assert grade.run({"claim": "∀ n : Nat, n + 0 = n", "proof": "by intro n; rfl"}).data["ok"] is True
+    assert grade.run({"claim": "2 + 2 = 5", "proof": "by decide"}).data["ok"] is False   # wrong claim

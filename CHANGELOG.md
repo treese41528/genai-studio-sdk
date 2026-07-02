@@ -2,6 +2,28 @@
 
 All notable changes to `genai-studio-sdk`. This project follows [semantic versioning](https://semver.org).
 
+## [1.7.0] — 2026-07-02
+
+check≪solve, generalized — a reusable verified best-of-n + sound checkers for new problem classes.
+
+### Added
+- **`verified_best_of` primitive** (`genai_studio.agents.verified`) — the *check≪solve* pattern
+  extracted from `benchmarks/root_solve_eval.py` into a reusable, model-agnostic function: filter k
+  candidates by a SOUND checker, then vote among the survivors (with a graceful `fallback-vote` and an
+  honest `verified` flag). Prefers a stronger `complete` check over plain `validity` when available.
+  When verifying is cheaper than solving, this converts *pass@k* into accuracy.
+- **`verify_factorization` tool** + `is_factorization` / `factorization_check` — verify a claimed
+  factorization soundly (expands back to the original AND is genuinely a product, not the polynomial
+  restated). Wired into the math profile; read-only.
+- **`inequality_check`** — the z3-backed sound checker for polynomial (in)equalities, exposed for
+  generate-and-filter over candidate bounds.
+- **`grade_proof` tool** (`tools/lean.py`) — Lean-certificate grading: give a claim + a candidate proof
+  (term or `by` block) separately, assemble the theorem, and kernel-check it. Verifying a proof is far
+  cheaper than finding one, so propose several and keep the accepted one. (Needs the Lean toolchain.)
+- **`benchmarks/factor_verify_eval.py`** — factorization benchmark (bare / maj@k / verified / pass@k)
+  demonstrating the check≪solve payoff beyond root-solving; grading is exact (expand + `sympy.factor`
+  fixed point), the checker is `factorization_check`.
+
 ## [1.6.0] — 2026-07-02
 
 MCP client — connect to external MCP servers, gated (P1: stdio + tools).

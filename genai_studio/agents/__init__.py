@@ -75,6 +75,7 @@ from .orchestrate import (DELEGATION_GUIDE, EFFORT_PRESETS, ROUTED_DEFAULTS, ROU
 from .fanout import make_fanout_tool, parallel_agents
 from .team import Team
 from .verify import VERIFY_PROMPT, verifier
+from .verified import VerifiedPick, factorization_check, inequality_check, verified_best_of
 from .panel import (Critic, CriticVote, Verdict, critic_gate, critic_panel, panel_tool,
                     DEFAULT_LENSES, LENS_PROMPTS, REFUTE_PROMPT)
 from .compose import assemble_agent, assemble_system, wire_capabilities
@@ -125,6 +126,8 @@ __all__ = [
     "effort_policy", "EFFORT_PRESETS",
     "parallel_agents", "make_fanout_tool",
     "verifier", "VERIFY_PROMPT",
+    # check≪solve: verified best-of-n + sound checkers
+    "verified_best_of", "VerifiedPick", "inequality_check", "factorization_check",
     # verification (adversarial critic panel + fail-closed gate)
     "critic_panel", "panel_tool", "critic_gate", "Verdict", "CriticVote", "Critic",
     "REFUTE_PROMPT", "LENS_PROMPTS", "DEFAULT_LENSES",

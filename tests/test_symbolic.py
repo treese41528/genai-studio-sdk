@@ -8,7 +8,18 @@ pytest.importorskip("sympy")
 
 import sympy
 
-from genai_studio.agents.tools.symbolic import _parse, matrix_op, symbolic_math, verify_math
+from genai_studio.agents.tools.symbolic import (_parse, matrix_op, symbolic_math, verify_factorization,
+                                                verify_math)
+
+
+def test_verify_factorization_valid_wrong_and_unfactored():
+    assert verify_factorization.run({"expression": "x**2 - 1", "factored": "(x-1)*(x+1)"}).data["verdict"] is True
+    assert verify_factorization.run({"expression": "x**3 - 8",
+                                     "factored": "(x-2)*(x**2+2*x+4)"}).data["verdict"] is True
+    bad = verify_factorization.run({"expression": "x**2 - 1", "factored": "(x+1)*(x-2)"})
+    assert bad.data["verdict"] is False and bad.data["reason"] == "not-equal"
+    flat = verify_factorization.run({"expression": "x**2 - 1", "factored": "x**2 - 1"})
+    assert flat.data["verdict"] is False and flat.data["reason"] == "not-factored"
 
 
 def test_subscripted_variables_parse_as_symbols():
