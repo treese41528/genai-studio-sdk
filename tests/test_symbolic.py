@@ -6,7 +6,16 @@ import pytest
 
 pytest.importorskip("sympy")
 
-from genai_studio.agents.tools.symbolic import matrix_op, symbolic_math, verify_math
+import sympy
+
+from genai_studio.agents.tools.symbolic import _parse, matrix_op, symbolic_math, verify_math
+
+
+def test_subscripted_variables_parse_as_symbols():
+    # regression: a1 must be the symbol a1, not a*1 = a (the split_symbols mangling)
+    assert _parse("a1") == sympy.Symbol("a1")
+    assert _parse("x1 + x2") == sympy.Symbol("x1") + sympy.Symbol("x2")
+    assert _parse("2x") == 2 * sympy.Symbol("x")          # implicit multiplication still works
 
 
 # ── verify_math (the flagship) ───────────────────────────────────────────────

@@ -63,8 +63,11 @@ BASE_SYSTEM = (
     "algebra, calculus, or matrix work, COMPUTE with symbolic_math/matrix_op and CHECK results with "
     "verify_math — never do math in your head; to PROVE a claim holds for all values use prove (a "
     "sound solver) or lean_check (a proof kernel); and when an answer is cheap to check (e.g. a root "
-    "by substitution), verify it before trusting it. When you have the answer, call final_answer (or "
-    "finish) with a concise result. Keep replies brief and to the point."
+    "by substitution), verify it before trusting it. If a tool returns UNKNOWN or says a claim is "
+    "OUTSIDE its fragment, do NOT retry the same call — reason that step yourself and move on. When "
+    "you have the answer, call final_answer (or finish). Keep replies brief — BUT for a proof or "
+    "multi-step derivation, end with a CLEAN, reader-friendly write-up: state the claim, the key steps "
+    "in order, and the conclusion, so a person can follow it WITHOUT seeing your tool calls."
 )
 
 

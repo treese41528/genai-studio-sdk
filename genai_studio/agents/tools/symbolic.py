@@ -23,12 +23,14 @@ def _sp():
 
 
 def _parse(expr: str):
-    """Parse a math expression: implicit multiplication (2x), `^` as power, `n!` factorial."""
+    """Parse a math expression: implicit multiplication (2x → 2*x), `^` as power, `n!` factorial.
+    Uses ``implicit_multiplication`` (NOT the ``_application`` variant, whose ``split_symbols`` mangles
+    subscripted names — ``a1`` → ``a*1`` = ``a``, ``x1 + x2`` → ``3*x``). So ``x1``, ``a2`` stay single
+    symbols; write ``x*y`` for a product of two distinct variables."""
     sp = _sp()
     from sympy.parsing.sympy_parser import (convert_xor, factorial_notation,
-                                            implicit_multiplication_application,
-                                            standard_transformations)
-    tr = standard_transformations + (implicit_multiplication_application, convert_xor, factorial_notation)
+                                            implicit_multiplication, standard_transformations)
+    tr = standard_transformations + (implicit_multiplication, convert_xor, factorial_notation)
     return sp.parsing.sympy_parser.parse_expr(expr, transformations=tr)
 
 
