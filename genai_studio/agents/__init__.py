@@ -70,8 +70,8 @@ from .guard import (
     guard,
     modify,
 )
-from .orchestrate import (DELEGATION_GUIDE, EFFORT_PRESETS, ROUTING_GUIDE, effort_policy, pipeline,
-                          supervisor)
+from .orchestrate import (DELEGATION_GUIDE, EFFORT_PRESETS, ROUTED_DEFAULTS, ROUTING_GUIDE,
+                          effort_policy, pipeline, routed_team, supervisor)
 from .fanout import make_fanout_tool, parallel_agents
 from .team import Team
 from .verify import VERIFY_PROMPT, verifier
@@ -121,6 +121,7 @@ __all__ = [
     "BudgetGuard", "ToolFilterGuard",
     # multi-agent: orchestration topologies + grounded verifier
     "supervisor", "pipeline", "DELEGATION_GUIDE", "ROUTING_GUIDE", "Team",
+    "routed_team", "ROUTED_DEFAULTS",
     "effort_policy", "EFFORT_PRESETS",
     "parallel_agents", "make_fanout_tool",
     "verifier", "VERIFY_PROMPT",

@@ -178,6 +178,92 @@ def supervisor(client, system: str, workers: Sequence[Agent], *,
                  system=sys_prompt, guards=guards, **agent_kwargs)
 
 
+# Benchmark-optimal defaults (routing study): a strong all-round manager, a fast+reliable math model,
+# a reasoning model run GREEDY, and a strong grounded research model. Override per gateway.
+ROUTED_DEFAULTS = {"manager": "qwen2.5:72b", "math": "qwen2.5:72b",
+                   "reasoning": "deepseek-r1:32b", "research": "qwen2.5:72b"}
+
+
+def _math_worker(client, model, tracer):
+    from .tools.general import calculator, final_answer
+    from .tools.smt import prove, solve_constraints
+    from .tools.symbolic import matrix_op, symbolic_math, verify_math
+    system = ("You are the MATH specialist. Solve arithmetic, algebra, calculus, and linear algebra "
+              "EXACTLY: COMPUTE with symbolic_math/matrix_op, CHECK every result with verify_math, and "
+              "establish universal claims with prove. Never do math in your head. Return the exact answer.")
+    return Agent(client=client, model=model, name="math_specialist", system=system, tracer=tracer,
+                 tools=[symbolic_math, verify_math, matrix_op, prove, solve_constraints, calculator, final_answer])
+
+
+def _reasoning_worker(client, model, tracer):
+    from .tools.general import calculator, final_answer
+    from .tools.symbolic import symbolic_math, verify_math
+    system = ("You are the REASONING specialist for hard, multi-step problems. Think carefully step by "
+              "step and verify intermediate results with the math tools when you can. Give the final answer.")
+    return Agent(client=client, model=model, name="reasoning_specialist", system=system, tracer=tracer,
+                 temperature=0.0,          # GREEDY — the routing study's best setting for reasoning models
+                 tools=[symbolic_math, verify_math, calculator, final_answer])
+
+
+def _research_worker(client, model, tracer):
+    from .tools.general import final_answer
+    from .tools.web import web_search, wikipedia_search
+    tools = [web_search, wikipedia_search, final_answer]
+    try:                                   # http / academic aren't re-exported; skip if unavailable
+        from .tools.http import make_fetch_json, make_http_get
+        tools = [make_http_get(), make_fetch_json(), *tools]
+    except Exception:
+        pass
+    try:
+        from .tools.academic import arxiv_search, openalex_search
+        tools = [arxiv_search, openalex_search, *tools]
+    except Exception:
+        pass
+    system = ("You are the RESEARCH specialist for facts and multi-hop questions. GROUND every claim "
+              "with web_search / wikipedia / academic tools — never answer from memory — and report "
+              "what you found with sources.")
+    return Agent(client=client, model=model, name="research_specialist", system=system, tracer=tracer, tools=tools)
+
+
+_ROUTED_BUILDERS = {"math": _math_worker, "reasoning": _reasoning_worker, "research": _research_worker}
+_ROUTED_DESC = {"math": "math_specialist (exact arithmetic/algebra/calculus/linear-algebra + proofs)",
+                "reasoning": "reasoning_specialist (hard multi-step reasoning, runs greedy)",
+                "research": "research_specialist (facts + multi-hop, grounded retrieval)"}
+
+
+def routed_team(client, *, manager_model: str | None = None, include=("math", "reasoning", "research"),
+                models: dict | None = None, system: str | None = None, tracer=None,
+                **supervisor_kwargs) -> Agent:
+    """A :func:`supervisor` whose workers are PRE-WIRED to the benchmark-optimal model + sampling +
+    tools for each role — so the manager's :data:`ROUTING_GUIDE` maps onto real specialists it can
+    pick, end-to-end.
+
+    Specialists (choose via ``include``): ``math`` (CAS/prove tools), ``reasoning`` (a reasoning model
+    at greedy), ``research`` (grounded retrieval). Every worker AND the manager share ``client`` (the
+    one-rate-limiter invariant); each worker overrides only its ``model``. Override any model via
+    ``models={"reasoning": "qwq:latest", ...}`` or ``manager_model=``.
+
+    Args:
+        client: the ONE shared client for the whole team.
+        manager_model: model for the coordinator (default: the all-round champion).
+        include: which specialists to build.
+        models: per-role model overrides merged over :data:`ROUTED_DEFAULTS`.
+        system: manager system prompt (a routing-aware default is used if omitted); DELEGATION_GUIDE
+            and ROUTING_GUIDE are appended by :func:`supervisor`.
+    """
+    m = {**ROUTED_DEFAULTS, **(models or {})}
+    roles = [r for r in include if r in _ROUTED_BUILDERS]
+    if not roles:
+        raise ValueError(f"routed_team needs ≥1 known role from {sorted(_ROUTED_BUILDERS)}; got {include}.")
+    workers = [_ROUTED_BUILDERS[r](client, m[r], tracer) for r in roles]
+    if system is None:
+        system = ("You are the coordinator. Your specialists (as tools): "
+                  + "; ".join(_ROUTED_DESC[r] for r in roles)
+                  + ". Route each subtask to the right specialist, then synthesize their results.")
+    return supervisor(client, system, workers, model=manager_model or m["manager"],
+                      tracer=tracer, **supervisor_kwargs)
+
+
 def pipeline(stages: Sequence[Agent], *, cancel=None,
              gate: Callable[[AgentResult], bool] | None = None) -> Callable:
     """Compose ``stages`` into a fixed sequential workflow (pure code orchestration).

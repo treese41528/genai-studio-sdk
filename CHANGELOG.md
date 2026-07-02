@@ -15,6 +15,13 @@ Code / Codex except MCP.
 - **Dynamic + parallel fan-out:** `parallel_agents` + a model-facing `fan_out(subtasks)` tool — the
   model decides how many independent subtasks to spawn; they run in parallel, paced by the shared
   rate-limiter. Wired into the REPL with read-only workers.
+- **Orchestrator routing knowledge:** `ROUTING_GUIDE` — the measured decision knowledge (which model
+  per task type, greedy sampling for reasoning models, compute+verify with the CAS tools, and
+  sample-filter-revote when check ≪ solve) — is appended to the `supervisor`/`Team` prompt by default
+  so the coordinator can route well itself instead of a hard-coded classifier. **`routed_team(client)`**
+  pre-wires specialists to the benchmark-optimal model + sampling + tools (`math_specialist`,
+  `reasoning_specialist` at greedy, grounded `research_specialist`), all sharing one client/rate-limiter,
+  so the routing knowledge maps onto real workers end-to-end.
 - **Coding edits + processes:** `apply_patch` (multi-hunk atomic SEARCH/REPLACE edits) and
   `run_background`/`check_job` (long-running processes: dev servers, builds, long tests).
 

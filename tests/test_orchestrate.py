@@ -66,6 +66,33 @@ def test_supervisor_appends_routing_guide_by_default():
     assert ROUTING_GUIDE not in supervisor(c, "Base.", [w], routing_guide=False).system
 
 
+def test_routed_team_wires_specialists_sharing_one_client():
+    from genai_studio.agents import routed_team
+    c = _Dummy()
+    mgr = routed_team(c, tracer=NullTracer())
+    names = {t.name for t in mgr.tools}
+    assert {"math_specialist", "reasoning_specialist", "research_specialist"} <= names
+    assert "final_answer" in names
+    assert ROUTING_GUIDE in mgr.system and mgr.client is c        # manager shares the client + has the guide
+
+
+def test_routed_team_worker_models_and_greedy_reasoning():
+    from genai_studio.agents.orchestrate import _math_worker, _reasoning_worker
+    c = _Dummy()
+    r = _reasoning_worker(c, "deepseek-r1:32b", NullTracer())
+    assert r.model == "deepseek-r1:32b" and r.temperature == 0.0 and r.client is c   # greedy, shared client
+    m = _math_worker(c, "qwen2.5:72b", NullTracer())
+    assert m.model == "qwen2.5:72b" and any(t.name == "verify_math" for t in m.tools)
+
+
+def test_routed_team_include_and_model_override():
+    from genai_studio.agents import routed_team
+    c = _Dummy()
+    mgr = routed_team(c, include=("math",), models={"math": "llama4:latest"}, tracer=NullTracer())
+    names = {t.name for t in mgr.tools}
+    assert "math_specialist" in names and "reasoning_specialist" not in names
+
+
 def test_supervisor_warns_on_mismatched_client():
     with pytest.warns(UserWarning, match="different ModelClient"):
         supervisor(_Dummy(), "s", [_agent(_Dummy(), name="x")])  # different clients
