@@ -428,10 +428,27 @@ whatever it can't recover.
 
 It works best at **moderate difficulty** — where pass@k is high but the majority is often wrong (the
 model is "sometimes right, often sloppy"). Too easy → nothing to filter; too hard → no correct sample
-survives to re-vote. **Limitation found:** a *validity* filter catches wrong roots but not *missing*
-ones, so at degree 4 `filtered` (42%) trails `pass@k` (67%) — valid-but-incomplete samples survive. A
-*completeness*-aware check (require `#distinct-valid-roots == degree`, sound since a degree-d poly has
-≤ d roots) would close that gap toward the pass@k ceiling.
+survives to re-vote.
+
+**Validity vs COMPLETENESS filter (n=60, seed 1).** A *validity* filter catches wrong roots but not
+*missing* ones, so valid-but-incomplete samples survive and dilute the re-vote. A *completeness* check
+— require `#distinct-valid-roots == degree` (sound: a degree-d polynomial has ≤ d roots) — fixes it,
+and it's still just substitute-and-count:
+
+| degree | bare | maj | filt-valid | **filt-COMPLETE** | pass@k |
+|---|---|---|---|---|---|
+| 2 | 100% | 100% | 100% | **100%** | 100% |
+| 3 | 75% | 83% | 92% | **100%** | 100% |
+| 4 | 25% | 25% | 42% | **50%** | 50% |
+| 5 | 0% | 0% | 8% | **25%** | 25% |
+| 6 | 0% | 8% | 17% | **17%** | 17% |
+| **all** | 40% | 43% | 52% | **58%** | **58%** |
+
+**`filt-COMPLETE == pass@k` in every row** — a cheap, independent, *complete* checker recovers 100% of
+the headroom and **converts pass@k into accuracy**. The banked rule: use CAS-verify filtering when
+(1) check ≪ solve, (2) the model is in its sometimes-right zone, and (3) the check verifies
+*completeness*, not just validity. The remaining ceiling is then pass@k itself (raise it with more
+samples or a stronger model).
 
 For **formal proof** (not answer-matching), `examples/18_lean_prove.py` runs the Lean 4 kernel-checked
 write→check→repair loop.
