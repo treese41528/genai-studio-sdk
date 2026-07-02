@@ -37,6 +37,40 @@ You coordinate specialist sub-agents, each exposed to you as a tool. When you de
 - match effort to the task — do not fan out many sub-agents for a simple question.
 When you have enough to answer, STOP delegating and give the final answer."""
 
+# The empirical decision knowledge (from this project's benchmark studies), so the ORCHESTRATOR
+# model can route well itself rather than relying on a hard-coded router. Names the worker to pick
+# by task type, the sampling that wins, and when tools/verification actually help. Appended to the
+# manager prompt by ``supervisor(routing_guide=True)``; also usable standalone.
+ROUTING_GUIDE = """\
+Routing knowledge (measured on this gateway — use it to choose the worker, tools, and settings; if a
+worker's name/description doesn't match a role below, fall back to the strongest general worker):
+
+PICK THE MODEL/WORKER BY TASK TYPE
+- Arithmetic / grade-school math: a fast general model (llama4 ~93%, qwen2.5:72b ~90% on GSM8K) — the
+  cheapest that suffices.
+- Facts / short factual answers / anything an unaided model often gets wrong: a strong general model
+  (qwen2.5:72b) WITH grounding/retrieval tools — grounding clearly helps here.
+- Hard multi-step reasoning / proofs: a reasoning model (e.g. deepseek-r1) at GREEDY decoding.
+- Multi-hop questions: grounded retrieval + a strong general model.
+- Best all-round default when unsure: qwen2.5:72b.
+
+SAMPLING
+- Reasoning models (deepseek-r1 / qwq / qwen3) are BEST at GREEDY (temperature 0) on agentic/tool-use
+  tasks — do NOT raise their temperature for these.
+
+TOOLS & VERIFICATION
+- Exact math (arithmetic, algebra, calculus, matrices): COMPUTE with symbolic_math/matrix_op and CHECK
+  with verify_math — never do the math in your head.
+- To show a claim holds for ALL values: use prove (a sound solver) or lean_check (a proof kernel), and
+  trust the certificate, not a guessed answer.
+- Grounding/retrieval helps facts and multi-hop; it does NOT help a strong model on math it already
+  does well — don't add it there.
+- When an answer is CHEAP and INDEPENDENT to check (roots by substitution, a factorization by
+  expanding, an inequality by a solver): sample several solutions, DISCARD any that fail the check
+  (require it to be COMPLETE, not merely self-consistent), and take the majority of the survivors —
+  this reliably turns "some sample is right" into the answer. When checking is as hard as solving
+  (open-ended reasoning), skip this — verification adds nothing there."""
+
 # Effort-scaling presets (Anthropic's lesson: vague delegation spawned ~50 subagents
 # for a trivial query). Each maps a coarse task class to a fan-out ceiling (a
 # BudgetGuard capping the MANAGER's own tool calls — its direct delegations — not
@@ -67,7 +101,7 @@ def supervisor(client, system: str, workers: Sequence[Agent], *,
                model: str | None = None, name: str = "supervisor",
                extra_tools: Sequence = (), tracer=None, cancel=None,
                budget=None, max_depth: int | None = None, effort: str | None = None,
-               delegation_guide: bool = True, **agent_kwargs) -> Agent:
+               delegation_guide: bool = True, routing_guide: bool = True, **agent_kwargs) -> Agent:
     """Build a coordinator :class:`Agent` that delegates to ``workers`` (agents-as-tools).
 
     Each worker is exposed via :meth:`Agent.as_tool` (isolated context, returns a
@@ -98,6 +132,9 @@ def supervisor(client, system: str, workers: Sequence[Agent], *,
             sensible ``max_depth`` (unless given), and appends a prompt hint, so
             "match effort to the task" is enforced, not merely advised.
         delegation_guide: append the prescriptive ``DELEGATION_GUIDE`` to ``system``.
+        routing_guide: append :data:`ROUTING_GUIDE` — the measured decision knowledge (which model/
+            worker per task type, greedy sampling for reasoning models, when tools/verification help)
+            — so the manager can route well itself instead of guessing. On by default.
         **agent_kwargs: forwarded to the manager :class:`Agent` (e.g. ``max_steps``).
     """
     workers = list(workers)
@@ -128,7 +165,11 @@ def supervisor(client, system: str, workers: Sequence[Agent], *,
                 *(getattr(t, "name", getattr(t, "__name__", None)) for t in extra_tools)}
     worker_tools = _unique_as_tools(workers, cancel=cancel, budget=budget,
                                     reserved=reserved, max_depth=max_depth)
-    sys_prompt = system + ("\n\n" + DELEGATION_GUIDE if delegation_guide else "")
+    sys_prompt = system
+    if delegation_guide:
+        sys_prompt += "\n\n" + DELEGATION_GUIDE
+    if routing_guide:
+        sys_prompt += "\n\n" + ROUTING_GUIDE
     if tracer is not None:
         agent_kwargs.setdefault("tracer", tracer)
     from .tools.general import final_answer  # lazy: keep agents-init light

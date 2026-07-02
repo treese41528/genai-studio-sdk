@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from genai_studio.agents import (
-    Agent, DELEGATION_GUIDE, Source, ToolResult, pipeline, supervisor, tool,
+    Agent, DELEGATION_GUIDE, ROUTING_GUIDE, Source, ToolResult, pipeline, supervisor, tool,
 )
 from genai_studio.agents.trace import NullTracer
 
@@ -54,6 +54,16 @@ def test_supervisor_appends_delegation_guide():
     assert DELEGATION_GUIDE in supervisor(c, "Base prompt.", [w]).system
     assert "Base prompt." in supervisor(c, "Base prompt.", [w]).system
     assert DELEGATION_GUIDE not in supervisor(c, "Base.", [w], delegation_guide=False).system
+
+
+def test_supervisor_appends_routing_guide_by_default():
+    # the orchestrator is GIVEN the measured decision knowledge (models/sampling/tools) to route well
+    c = _Dummy()
+    w = _agent(c, name="w")
+    sysprompt = supervisor(c, "Base.", [w]).system
+    assert ROUTING_GUIDE in sysprompt
+    assert "greedy" in sysprompt.lower() and "verify_math" in sysprompt   # key knowledge present
+    assert ROUTING_GUIDE not in supervisor(c, "Base.", [w], routing_guide=False).system
 
 
 def test_supervisor_warns_on_mismatched_client():
