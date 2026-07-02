@@ -31,5 +31,6 @@ def test_init_writes_and_reloads(tmp_path):
                       cfg=types.SimpleNamespace(sessions_dir=tmp_path, allow_shell_expansion=False),
                       cwd=tmp_path, registry=build_registry(), base_system="BASE")
     _init(ctx, "")
-    assert (tmp_path / "CLAUDE.md").exists()
+    assert (tmp_path / "AGENTS.md").exists()               # vendor-neutral, not CLAUDE.md
+    assert not (tmp_path / "CLAUDE.md").exists()
     assert agent.system.startswith("BASE") and "Project overview" in agent.system

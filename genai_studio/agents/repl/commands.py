@@ -258,8 +258,8 @@ def _compact(ctx, arg):
 
 
 def _init(ctx, arg):
-    from .memory import build_system_prompt, init_claude_md, load_project_memory
-    p = init_claude_md(ctx.cwd)
+    from .memory import build_system_prompt, init_agents_md, load_project_memory
+    p = init_agents_md(ctx.cwd)
     mem, files = load_project_memory(ctx.cwd)
     ctx.agent.system = build_system_prompt(ctx.base_system, mem)     # reflect it immediately
     print(f"(wrote {p}; reloaded {len(files)} memory file(s))")
@@ -283,7 +283,7 @@ _BUILTINS = [
     ("plan", "toggle plan mode (read-only explore + propose)", _plan, None),
     ("approvals", "show or set approval mode", _approvals, "[suggest|auto|full]"),
     ("status", "show session status", _status, None),
-    ("init", "write a starter CLAUDE.md and load it", _init, None),
+    ("init", "write a starter AGENTS.md and load it", _init, None),
     ("diff", "show the working-tree git diff", _diff, None),
     ("resume", "resume a prior session", _resume, "[id]"),
     ("compact", "summarize history to free up context", _compact, None),

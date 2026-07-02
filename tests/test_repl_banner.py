@@ -6,7 +6,8 @@ import types
 from pathlib import Path
 
 from genai_studio import __version__
-from genai_studio.agents.repl.cli import _banner, _capabilities
+from genai_studio.agents.repl.cli import _banner, _capabilities, _slash_completer
+from genai_studio.agents.repl.commands import build_registry
 
 
 def _tools(*names):
@@ -34,3 +35,15 @@ def test_splash_is_informative_and_plain_without_tty():
     assert "6 tools" in out and "3 skills" in out and "2 custom" in out
     assert "/help" in out and "/quit" in out
     assert "\033[" not in out                                          # no ANSI when stdout isn't a tty
+
+
+def test_slash_completer_cycles_matches():
+    comp = _slash_completer(build_registry())
+    matches, state = [], 0
+    while (m := comp("/p", state)) is not None:                        # cycle all "/p…" commands
+        matches.append(m)
+        state += 1
+    assert "/plan" in matches and "/pretty" in matches
+    assert all(m.startswith("/p") for m in matches)
+    assert comp("hello", 0) is None                                   # non-slash: no completion
+    assert comp("/help", 0) == "/help" and comp("/help", 5) is None   # exhausts past the matches

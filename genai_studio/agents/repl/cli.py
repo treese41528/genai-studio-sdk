@@ -25,6 +25,36 @@ try:                                     # enables arrow-key editing + in-sessio
 except ImportError:                      # not available on some platforms (e.g. plain Windows)
     pass
 
+
+def _slash_completer(registry):
+    """A readline completer over slash commands — matches the typed ``/prefix`` (read live from the
+    registry, so custom commands are included). Repeated Tab cycles through the matches."""
+    def completer(text, state):
+        if not text.startswith("/"):
+            return None
+        matches = sorted(f"/{n}" for n in registry.names() if f"/{n}".startswith(text))
+        return matches[state] if state < len(matches) else None
+    return completer
+
+
+def _install_slash_completion(registry):
+    """Bind Tab to CYCLE through slash-command completions (like the ``/`` menu in Claude Code):
+    Tab next, Shift-Tab previous, and list the options when ambiguous. Fails open if unavailable."""
+    try:
+        import readline
+    except ImportError:
+        return
+    readline.set_completer(_slash_completer(registry))
+    readline.set_completer_delims(" \t\n")            # keep "/model" as one token
+    for binding in ("tab: menu-complete",             # cycle forward through matches
+                    '"\\e[Z": menu-complete-backward',  # Shift-Tab: cycle backward
+                    "set show-all-if-ambiguous on",   # first Tab also lists the options
+                    "set menu-complete-display-prefix on"):
+        try:
+            readline.parse_and_bind(binding)
+        except Exception:
+            pass
+
 BASE_SYSTEM = (
     "You are an interactive coding and research assistant running in a terminal. Use the "
     "available tools to read files, search the codebase (grep/glob), run shell commands, search "
@@ -158,9 +188,9 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
     worker_tools = [t for t in tools if t.name in READ_ONLY_TOOLS and t.name not in _meta]
     tools = [*tools, make_fanout_tool(client, model=model, worker_tools=worker_tools, max_agents=5)]
 
-    mem_block = ("# Project memory (CLAUDE.md / AGENTS.md)\n" + mem_text.strip()
+    mem_block = ("# Project memory (AGENTS.md)\n" + mem_text.strip()
                  if (mem_text or "").strip() else "")
-    # priority order: base -> CLAUDE.md -> recalled facts -> skills catalog
+    # priority order: base -> AGENTS.md -> recalled facts -> skills catalog
     system = assemble_system(base_system, mem_block, *cap_blocks)
     agent = Agent(client=client, tools=tools, system=system, tracer=NullTracer(),
                   guards=[approval_guard], model=model, max_steps=cfg.max_steps,
@@ -172,6 +202,7 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
                       client=client, cfg=cfg, cwd=cwd, registry=registry, base_system=base_system)
     ctx.pretty = True                                # LaTeX→Unicode + markdown rendering (/pretty toggles)
     n_custom = load_custom_into(registry, cwd)
+    _install_slash_completion(registry)              # Tab cycles through /commands (custom included)
 
     if getattr(args, "resume", None):
         resume_cmd(ctx, "" if args.resume == "__pick__" else args.resume)
