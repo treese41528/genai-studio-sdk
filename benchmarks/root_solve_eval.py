@@ -59,11 +59,11 @@ def _guard(fn, wall):
     return box.get("r", "")
 
 
-def _gen(n, seed):
+def _gen(n, seed, degrees):
     rng = random.Random(seed)
     out = []
-    for _ in range(n):
-        deg = rng.choice([2, 3, 3, 4, 4])                       # hard enough to slip, complete sets reachable
+    for i in range(n):
+        deg = degrees[i % len(degrees)]                        # balanced spread across degrees
         roots = rng.sample(range(-6, 7), deg)                  # distinct integer roots
         P = sympy.expand(sympy.prod([_X - r for r in roots]))
         pretty = sympy.sstr(P).replace("**", "^").replace("*", "")
@@ -138,43 +138,53 @@ def main():
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--temp", type=float, default=0.7)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--degrees", default="2,3,4,5,6", help="polynomial degrees to sweep (cycled)")
     ap.add_argument("--timeout", type=int, default=45)
     ap.add_argument("--wall", type=float, default=100.0)
     args = ap.parse_args()
 
     client = _client(args.model, args.timeout)
-    probs = _gen(args.n, args.seed)
-    print(f"ROOT-SOLVE (check≪solve) — model={args.model} n={args.n} k={args.k} temp={args.temp}\n", flush=True)
+    degrees = [int(d) for d in args.degrees.split(",")]
+    probs = _gen(args.n, args.seed, degrees)
+    print(f"ROOT-SOLVE (check≪solve) — model={args.model} n={args.n} k={args.k} "
+          f"degrees={degrees}\n", flush=True)
 
-    hit = {"bare": 0, "maj": 0, "filtered": 0, "passk": 0}
-    filtered_frac = []
+    from collections import defaultdict
+    cell = defaultdict(lambda: {"bare": 0, "maj": 0, "filtered": 0, "passk": 0, "n": 0, "filt": 0})
     for i, pr in enumerate(probs, 1):
         P, gold = pr["P"], pr["gold"]
+        deg = int(sympy.degree(P))
         bare = _extract(_solve(pr["problem"], client, args.model, 0.0, args.wall))
         samples = [_extract(_solve(pr["problem"], client, args.model, args.temp, args.wall))
                    for _ in range(args.k)]
         survivors = [s for s in samples if _valid(P, s)]
-        filtered_frac.append(1 - len(survivors) / max(1, len(samples)))
         picks = {"bare": bare, "maj": _vote(samples),
                  "filtered": _vote(survivors) if survivors else _vote(samples)}
-        line = f"[{i:>3}/{args.n}] deg{sympy.degree(P)}"
+        c = cell[deg]
+        c["n"] += 1
+        c["filt"] += len(samples) - len(survivors)
+        line = f"[{i:>3}/{args.n}] deg{deg}"
         for arm in ("bare", "maj", "filtered"):
             ok = _correct(picks[arm], gold)
-            hit[arm] += ok
+            c[arm] += ok
             line += f"  {arm[:4]}={'✓' if ok else '·'}"
-        hit["passk"] += any(_correct(s, gold) for s in samples)     # ceiling: any sample correct
+        c["passk"] += any(_correct(s, gold) for s in samples)
         line += f"  (filt {len(samples)-len(survivors)}/{len(samples)})  gold={sorted(int(g) for g in gold)}"
         print(line, flush=True)
 
-    n = args.n
-    print("\n=== RESULTS ===")
-    for arm in ("bare", "maj", "filtered"):
-        print(f"  {arm:9}: {hit[arm]}/{n} = {hit[arm]/n:.1%}")
-    print(f"  pass@{args.k} (ceiling): {hit['passk']}/{n} = {hit['passk']/n:.1%}")
-    print(f"  self-consistency lift (maj − bare):     {(hit['maj']-hit['bare'])/n:+.1%}")
-    print(f"  PROVE-filter lift    (filtered − maj):  {(hit['filtered']-hit['maj'])/n:+.1%}")
-    print(f"  total lift           (filtered − bare): {(hit['filtered']-hit['bare'])/n:+.1%}")
-    print(f"  avg samples filtered out: {sum(filtered_frac)/len(filtered_frac):.0%}")
+    tot = {k: sum(c[k] for c in cell.values()) for k in ("bare", "maj", "filtered", "passk", "n", "filt")}
+
+    def _row(name, c):
+        n = c["n"] or 1
+        return (f"  {name:>7} (n={c['n']:>2}): bare {c['bare']/n:5.0%} | maj {c['maj']/n:5.0%} | "
+                f"filt {c['filtered']/n:5.0%} | pass@k {c['passk']/n:5.0%} | "
+                f"FILTER-LIFT {(c['filtered']-c['maj'])/n:+5.0%} | filtered {c['filt']/(n*args.k):3.0%}")
+
+    print("\n=== PER-DEGREE (where does the filter win?) ===")
+    for d in sorted(cell):
+        print(_row(f"deg {d}", cell[d]))
+    print("  " + "-" * 96)
+    print(_row("ALL", tot))
 
 
 if __name__ == "__main__":
