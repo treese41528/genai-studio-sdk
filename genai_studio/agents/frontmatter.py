@@ -45,12 +45,16 @@ def _parse_yaml_flat(fm: str) -> dict:
 
 
 def _aslist(v):
-    """Coerce a frontmatter value to a list (``None`` → ``None``; CSV string → list)."""
+    """Coerce a frontmatter value to a list (``None`` → ``None``; CSV or YAML flow-list string → list).
+    Strips a surrounding ``[ ]`` and per-item quotes so ``[a, b, c]`` → ``['a','b','c']`` (not ``['[a'…])."""
     if v is None:
         return None
     if isinstance(v, list):
         return v
-    return [x.strip() for x in str(v).split(",") if x.strip()]
+    s = str(v).strip()
+    if s.startswith("[") and s.endswith("]"):           # YAML flow list
+        s = s[1:-1]
+    return [x.strip().strip("'\"") for x in s.split(",") if x.strip().strip("'\"")]
 
 
 def expand_template(body: str, args: str, cwd, *, allow_shell: bool = False) -> str:

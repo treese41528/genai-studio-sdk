@@ -75,6 +75,19 @@ def test_isolated_flag_parsed(tmp_path):
     assert skills["scoped"].allowed_tools == ("read_file",)
 
 
+def test_multi_item_allowed_tools_parses_without_brackets(tmp_path):
+    # regression: a multi-item flow list must not leave '[' / ']' stuck to the first/last tool
+    _write_skill(tmp_path, "multi", "description: Multi\nallowed-tools: [search_lemmas, lean_check, grade_proof]",
+                 "Prove it.")
+    assert load_skills(tmp_path)["multi"].allowed_tools == ("search_lemmas", "lean_check", "grade_proof")
+
+
+def test_aslist_strips_flow_list_in_string_fallback():
+    from genai_studio.agents.frontmatter import _aslist       # the no-yaml fallback path
+    assert _aslist("[a, b, c]") == ["a", "b", "c"]
+    assert _aslist(["a", "b"]) == ["a", "b"] and _aslist(None) is None
+
+
 def test_descriptionless_skipped(tmp_path, recwarn):
     _write_skill(tmp_path, "blank", "model: x", "body with no description")
     skills = load_skills(tmp_path)
