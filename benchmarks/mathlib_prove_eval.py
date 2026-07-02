@@ -65,12 +65,22 @@ def main():
     ap.add_argument("--max-steps", type=int, default=12)
     ap.add_argument("--timeout", type=float, default=150.0)   # per lean_check (full mathlib import is slow)
     ap.add_argument("--only", default="", help="comma-separated theorem ids to run")
+    ap.add_argument("--skill", default="", help="use a skill's body as the system prompt (e.g. lean-prove)")
     args = ap.parse_args()
     if not os.environ.get("GENAI_STUDIO_API_KEY"):
         sys.exit("set GENAI_STUDIO_API_KEY (and GENAI_STUDIO_RPM=20)")
     proj = mathlib_project()
     if proj is None:
         sys.exit("no mathlib project (set GENAI_STUDIO_LEAN_PROJECT)")
+
+    system = SYSTEM
+    if args.skill:                                            # drive the model with a skill's body
+        from genai_studio.agents.skills import load_skills
+        sk = load_skills(".").get(args.skill)
+        if sk is None:
+            sys.exit(f"skill {args.skill!r} not found")
+        system = sk.body + ("\n\nWhen lean_check reports PROOF CHECKED, call final_answer with the exact "
+                            "verified source in a ```lean block.")
 
     client = GenAIStudioClient(GenAIStudio(validate_model=False, timeout=180), default_model=args.model)
     base_lc = make_lean_check(project_dir=proj, timeout=args.timeout)
@@ -90,7 +100,7 @@ def main():
             return r
 
         agent = Agent(client=client, model=args.model, tools=[search, lean_check, final_answer],
-                      system=SYSTEM, tracer=NullTracer(), max_steps=args.max_steps, temperature=0.0)
+                      system=system, tracer=NullTracer(), max_steps=args.max_steps, temperature=0.0)
         task = (f"Prove this Lean theorem (name it `thm`):\n\n"
                 f"    theorem thm {prop} := by sorry\n\nGoal in words: {goal}. Replace `sorry` with a real proof.")
         t0 = time.time()
