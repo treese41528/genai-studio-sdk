@@ -77,7 +77,8 @@ def _capabilities(tools) -> str:
 def _banner(cfg, tools, config, cwd, n_custom, mem_files, n_skills=0, preset=None, temperature=None) -> str:
     """A welcoming, informative splash: framed header + version/tagline, aligned session info, a
     capability summary, and next-step hints."""
-    from genai_studio import __version__
+    from genai_studio import __version__  # single-sourced: bumping __version__ updates the splash too.
+    # (When a NEW tool CATEGORY is added, extend _capabilities() so the "capable" line reflects it.)
 
     color = sys.stdout.isatty()
 

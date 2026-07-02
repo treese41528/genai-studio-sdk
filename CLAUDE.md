@@ -28,6 +28,10 @@ export GENAI_STUDIO_RPM=20        # ALWAYS pace the gateway — it silently drop
   dataclass field (deferred tools must change per-step loop behavior).
 - **Backward-compatible by default:** new features must leave existing behavior byte-identical when
   unused (e.g. `tool_search=None`, `sampling={}`).
+- **Version is single-sourced** at `genai_studio/__init__.py:__version__` → pyproject (dynamic) AND the
+  REPL splash (`repl/cli.py _banner` reads `__version__`). Bump only there; never hardcode a version in
+  the banner. When adding a new tool CATEGORY, extend `_capabilities()` so the splash's "capable" line
+  reflects it.
 - Style: dataclasses; free functions over classes where possible; frozen result/config objects;
   dense honest docstrings; fail-CLOSED on invocation/action, fail-OPEN on discovery/retrieval.
 - **One shared client per agent tree** ⇒ one process-wide `RateLimiter`. Sub-agents (`as_tool`,
