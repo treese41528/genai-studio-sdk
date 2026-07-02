@@ -17,6 +17,16 @@ def test_latex_common_math():
     assert latex_to_unicode(r"$a_{ij} \times 10^{-2}$") == "aᵢⱼ × 10⁻²"
 
 
+def test_snake_case_identifiers_survive_prettify():
+    # regression: '_' inside an identifier must NOT be read as a math subscript
+    # (mcp__filesystem__list_allowed_directories -> mcpfilesystemlistₐllowed_directories)
+    for ident in ("mcp__filesystem__list_allowed_directories", "read_file", "get_file_info",
+                  "a_long_snake_case_name", "list_directory_with_sizes"):
+        assert latex_to_unicode(ident) == ident
+    # but genuine single-variable math subscripts still convert
+    assert latex_to_unicode(r"$a_1 + x_i$") == "a₁ + xᵢ"
+
+
 def test_latex_big_operators_as_readable_ranges():
     # limits render as ranges, not cramped subscripts; thin-space \, becomes a real space
     assert latex_to_unicode(r"$\sum_{i=1}^{n} i$") == "∑[i=1..n] i"

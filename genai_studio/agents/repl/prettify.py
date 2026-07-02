@@ -171,7 +171,11 @@ def latex_to_unicode(s: str) -> str:
         s = re.sub(r"\\(hat|widehat|bar|overline|vec|tilde|widetilde|dot|ddot|check|acute|grave|breve|mathring)\{([^{}]*)\}",
                    lambda m: _accent(m.group(1), m.group(2)), s)
         s = re.sub(r"\\(hat|bar|vec|tilde|dot|check)\s+(\S)", lambda m: _accent(m.group(1), m.group(2)), s)
-        s = re.sub(r"([_^])\s*([^{\s\\])", r"\1{\2}", s)       # normalise single scripts to braces
+        s = re.sub(r"\^\s*([^{\s\\])", r"^{\1}", s)            # superscripts: ^x -> ^{x}
+        # subscripts: wrap ONLY a single-char base (a_1, x_i) or a big-op command (\sum_i) with a
+        # single-char subscript at a word boundary — NEVER a snake_case identifier (a_long_name,
+        # read_file) or an mcp__name, whose '_' must survive verbatim.
+        s = re.sub(r"(?<![A-Za-z0-9])([A-Za-z0-9]|\\[A-Za-z]+)_([^{\s\\])(?![A-Za-z0-9])", r"\1_{\2}", s)
         for _ in range(2):
             s = re.sub(_BIGOP_RE, _bigop, s)
         # 7. boxed / frac / sqrt / remaining scripts (nested passes)
