@@ -84,6 +84,22 @@ def test_renderer_pretty_flag():
     assert off._pretty(r"$x^2$") == r"$x^2$"           # raw when off
 
 
+def test_renderer_unwraps_json_answer_envelope():
+    import io
+    buf = io.StringIO()
+    r = StreamRenderer(color=False, pretty=False, stream=buf)
+    r._seg = ['{"answer": "Access is limited to /tmp."}']    # model wrapped its prose in JSON
+    r._flush_text()
+    out = buf.getvalue()
+    assert "Access is limited to /tmp." in out and '"answer"' not in out
+    # a normal answer passes through untouched
+    buf2 = io.StringIO()
+    r2 = StreamRenderer(color=False, pretty=False, stream=buf2)
+    r2._seg = ["Just plain text."]
+    r2._flush_text()
+    assert buf2.getvalue().strip() == "Just plain text."
+
+
 def test_pretty_command_toggles(tmp_path):
     ctx = ReplContext(agent=None, tools=[], approval_config=None, recorder=None, client=None,
                       cfg=types.SimpleNamespace(), cwd=tmp_path, registry=build_registry())

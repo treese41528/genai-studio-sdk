@@ -10,6 +10,7 @@ stub fields are ignored.
 
 from __future__ import annotations
 
+import json
 import sys
 
 from ..client import _tool_calls_from_text
@@ -35,6 +36,29 @@ def _is_toolcall_text(text: str) -> bool:
         return bool(_tool_calls_from_text(text))
     except Exception:
         return False
+
+
+_ANSWER_KEYS = ("answer", "final_answer", "response", "result", "output", "text")
+
+
+def _unwrap_answer(text: str) -> str:
+    """Some models wrap their whole final answer in a lone JSON envelope, e.g.
+    ``{"answer": "…"}`` (not a tool call) — return the inner prose so the user sees clean text.
+    Conservative: only a small pure-envelope object with a string answer field is unwrapped."""
+    s = text.strip()
+    if not (s.startswith("{") and s.endswith("}")):
+        return text
+    try:
+        obj = json.loads(s)
+    except (TypeError, ValueError):
+        return text
+    if not isinstance(obj, dict) or not (1 <= len(obj) <= 2):
+        return text
+    for key in _ANSWER_KEYS:
+        v = obj.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return text
 
 
 class StreamRenderer:
@@ -73,7 +97,7 @@ class StreamRenderer:
         self._seg = []
         if not text or _is_toolcall_text(text):
             return
-        self.out.write(self._pretty(text) + "\n")
+        self.out.write(self._pretty(_unwrap_answer(text)) + "\n")
         self.out.flush()
         self._printed = True
 
@@ -110,7 +134,7 @@ class StreamRenderer:
             self._flush_text()                     # the final answer (if streamed as text)
             text = (getattr(res, "text", "") or "").strip()
             if not self._printed and text and not _is_toolcall_text(text):
-                self.out.write(self._pretty(text) + "\n")   # finish-tool / non-streamed answer
+                self.out.write(self._pretty(_unwrap_answer(text)) + "\n")   # finish-tool / non-streamed answer
             stopped = getattr(res, "stopped", "final")
             if stopped and stopped != "final":
                 note = {"cancelled": "(interrupted)", "max_steps": "(stopped: step limit)",
