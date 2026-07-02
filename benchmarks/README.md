@@ -415,5 +415,23 @@ solve) vs `+13.3 pp` on root-solving (check ≪ solve). CAS/SMT/Lean verificatio
 where checking is cheap and independent (roots, inequalities, factorizations, proofs), and not on
 reasoning-bound answer-matching — matching Tao's generate/verify division of labour.
 
+**Where within check≪solve does it work best? (degree sweep, n=60, `--degrees 2..6`):** the lift is an
+inverted-U in difficulty — the filter's ceiling is **pass@k**, and its lift is `pass@k − maj` minus
+whatever it can't recover.
+
+| degree | bare | maj | filtered | pass@k | filter-lift |
+|---|---|---|---|---|---|
+| 2 (easy)     | 100% | 100% | 100% | 100% | +0% — nothing to fix |
+| **3 (moderate)** | 75% | 75% | **92%** | 100% | **+17%** — the sweet spot |
+| 4 (hard)     | 25% | 33% | 42% | 67% | +8% |
+| 5–6 (brutal) | 0% | 0% | 8% | 8–17% | +8% — efficient but ~no headroom |
+
+It works best at **moderate difficulty** — where pass@k is high but the majority is often wrong (the
+model is "sometimes right, often sloppy"). Too easy → nothing to filter; too hard → no correct sample
+survives to re-vote. **Limitation found:** a *validity* filter catches wrong roots but not *missing*
+ones, so at degree 4 `filtered` (42%) trails `pass@k` (67%) — valid-but-incomplete samples survive. A
+*completeness*-aware check (require `#distinct-valid-roots == degree`, sound since a degree-d poly has
+≤ d roots) would close that gap toward the pass@k ceiling.
+
 For **formal proof** (not answer-matching), `examples/18_lean_prove.py` runs the Lean 4 kernel-checked
 write→check→repair loop.
