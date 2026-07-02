@@ -52,6 +52,7 @@ READ_ONLY_TOOLS = frozenset({
     "symbolic_math", "matrix_op",
     "prove", "solve_constraints",                   # sound theorem proving (SMT, pure reasoning)
     "lean_check", "grade_proof",                    # kernel-checked proof verification (pure)
+    "search_lemmas",                                # mathlib lemma retrieval (read-only)
     "check_job",                                    # poll a background job's status/output
     # read-only meta-tools (load instructions / discover tools / recall facts — no state change)
     "use_skill", "search_tools", "recall_memory",

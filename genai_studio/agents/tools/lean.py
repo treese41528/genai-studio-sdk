@@ -29,16 +29,33 @@ def lean_available(lean: str = "lean") -> str | None:
     return fallback if os.path.exists(fallback) else None
 
 
-def make_lean_check(*, lean: str = "lean", timeout: float = 40):
-    """Return the ``lean_check`` tool (runs the Lean kernel on model-written proofs)."""
+def lake_available(lake: str = "lake") -> str | None:
+    """Path to the Lake build tool, or None (needed to run a proof inside a mathlib project)."""
+    exe = shutil.which(lake)
+    if exe:
+        return exe
+    fallback = os.path.expanduser("~/.elan/bin/lake")
+    return fallback if os.path.exists(fallback) else None
+
+
+def make_lean_check(*, lean: str = "lean", timeout: float | None = None, project_dir: str | None = None):
+    """Return the ``lean_check`` tool (runs the Lean kernel on model-written proofs).
+
+    ``project_dir`` — a Lean project with **mathlib**: the proof is checked with ``lake env lean``
+    inside it, so ``import Mathlib`` resolves and ``ring``/``norm_num``/``linarith``/``positivity`` +
+    the whole lemma library become available. Without it, only Lean-core tactics work."""
     exe = lean_available(lean)
+    mathlib = project_dir is not None
+    lake = lake_available() if mathlib else None
+    timeout = timeout if timeout is not None else (120 if mathlib else 40)
 
     @tool
     def lean_check(code: str) -> ToolResult:
         """Check a Lean 4 proof with the Lean kernel. Write a COMPLETE theorem with its proof, e.g.
         `theorem t : 2 + 2 = 4 := by decide`. Returns SUCCESS if the kernel accepts it (a real,
         machine-checked proof), or the compiler errors so you can fix and retry. Core tactics work
-        (decide, omega, rfl, simp, constructor, exact); norm_num/ring/linarith need mathlib.
+        (decide, omega, rfl, simp, constructor, exact). If mathlib is available, start the code with
+        `import Mathlib` to use ring/norm_num/linarith/positivity and the lemma library.
 
         Args:
             code: complete Lean 4 source — the theorem statement and its proof.
@@ -46,12 +63,19 @@ def make_lean_check(*, lean: str = "lean", timeout: float = 40):
         if exe is None:
             return ToolResult(content="", error="Lean 4 not installed (put `lean` on PATH; "
                               "install via https://leanprover-community.github.io/get_started.html)")
+        if mathlib and lake is None:
+            return ToolResult(content="", error="lake not found — needed to run inside the mathlib project")
         d = tempfile.mkdtemp()
         path = os.path.join(d, "Proof.lean")
         with open(path, "w", encoding="utf-8") as f:
             f.write(code)
+        if mathlib:                                        # run in-project so `import Mathlib` resolves
+            env = {**os.environ, "PATH": os.path.dirname(exe) + os.pathsep + os.environ.get("PATH", "")}
+            cmd, cwd = [lake, "env", "lean", path], project_dir
+        else:
+            env, cmd, cwd = None, [exe, path], d
         try:
-            r = subprocess.run([exe, path], capture_output=True, text=True, timeout=timeout, cwd=d)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd, env=env)
         except subprocess.TimeoutExpired:
             return ToolResult(content="", error=f"lean timed out after {timeout}s")
         except Exception as e:
@@ -69,12 +93,13 @@ def make_lean_check(*, lean: str = "lean", timeout: float = 40):
     return lean_check
 
 
-def make_grade_proof(*, lean: str = "lean", timeout: float = 40):
+def make_grade_proof(*, lean: str = "lean", timeout: float | None = None, project_dir: str | None = None):
     """Return ``grade_proof`` — grade a submitted proof CERTIFICATE against a claim. The claim (a Lean
     proposition) and the proof (a term or ``by`` block) are given SEPARATELY, assembled into a theorem,
     and kernel-checked. This is the *check≪solve* proof arm: verifying a candidate proof is far cheaper
-    than producing one, so propose several and keep the one the kernel accepts."""
-    checker = make_lean_check(lean=lean, timeout=timeout)
+    than producing one, so propose several and keep the one the kernel accepts. ``project_dir`` runs the
+    check inside a mathlib project (use ``imports="import Mathlib"`` for the full library)."""
+    checker = make_lean_check(lean=lean, timeout=timeout, project_dir=project_dir)
 
     @tool
     def grade_proof(claim: str, proof: str, imports: str = "") -> ToolResult:

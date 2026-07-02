@@ -53,7 +53,10 @@ def build_tools(profile: str = "general", *, workspace_root=None,
     # exact CAS grounding ([math]) + sound theorem proving over arithmetic ([smt]); lazy-imported
     math = [verify_math, verify_factorization, symbolic_math, matrix_op, prove, solve_constraints]
     from .tools.lean import lean_available, make_grade_proof, make_lean_check
-    if lean_available():                            # kernel-checked proving (only if Lean 4 present)
+    from .tools.mathlib import mathlib_project, mathlib_tools
+    if mathlib_project():                           # optional mathlib proof track: in-project proving
+        math = math + mathlib_tools()               # + search_lemmas (ring/norm_num/linarith + lemmas)
+    elif lean_available():                          # else Lean core only (decide/omega/rfl)
         math = math + [make_lean_check(), make_grade_proof()]
     coding = list(file_tools)
     from .tools.patch import make_patch_tool

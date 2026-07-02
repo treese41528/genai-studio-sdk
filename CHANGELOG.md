@@ -2,6 +2,29 @@
 
 All notable changes to `genai-studio-sdk`. This project follows [semantic versioning](https://semver.org).
 
+## [1.8.0] — 2026-07-02
+
+Optional Lean + **mathlib** proof track — real competition-math proving, gated on a mathlib install.
+
+### Added
+- **mathlib-backed `lean_check` / `grade_proof`** — `make_lean_check(project_dir=…)` runs the kernel
+  INSIDE a Lean project with mathlib (`lake env lean`), so `import Mathlib` resolves and
+  `ring` / `norm_num` / `linarith` / `positivity` + the ~180k-lemma library become available. Falls
+  back to Lean-core tactics when no project.
+- **`search_lemmas` tool** (`tools/mathlib.py`) — retrieval over the mathlib declaration corpus so the
+  model can FIND the lemma it needs before proving. Scans the source once (~180k declarations → cached
+  JSON, built LAZILY on first search), keyword-ranks the whole corpus, then optionally embedding-reranks
+  only the top-N (reusing `embed.py`; fails open to keyword-only). Read-only.
+- **`mathlib_project()` / `mathlib_tools()` / `setup_mathlib()`** — detect a project
+  (`$GENAI_STUDIO_LEAN_PROJECT` or a default), bundle the mathlib tools, and scaffold + `lake exe cache
+  get` (prebuilt oleans — a large download, not a from-scratch compile). The math profile auto-uses the
+  mathlib tools when a project is present.
+- **`scan_declarations` / `scan_file`** — a Lean declaration scanner (name + signature + module + doc),
+  robust to `@[attr]` / `protected` / `private`. Offline-tested; the live path is exercised against a
+  real mathlib checkout (Lean 4.31.0).
+
+Note: mathlib is a Lean/lake install (not a pip package) — `setup_mathlib(dir)` or `lake new <p> math`.
+
 ## [1.7.0] — 2026-07-02
 
 check≪solve, generalized — a reusable verified best-of-n + sound checkers for new problem classes.
