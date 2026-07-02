@@ -31,6 +31,13 @@ def test_recovers_tool_calls_list_wrapper():
     assert len(calls) == 1 and calls[0].name == "g"
 
 
+def test_recovers_function_as_name_string():
+    # observed with MCP tool calls: "function" holds the NAME directly (not a nested object)
+    calls = _tool_calls_from_text(
+        '{"function": "mcp__filesystem__list_allowed_directories", "arguments": {}}')
+    assert len(calls) == 1 and calls[0].name == "mcp__filesystem__list_allowed_directories"
+
+
 def test_recovers_underscoreless_toolcalls_alias():
     # observed on MATH-500 grounded runs: qwen emits {"toolcalls": [...]} (no underscore),
     # which used to leak into the final answer instead of being executed

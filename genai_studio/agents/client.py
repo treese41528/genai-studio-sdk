@@ -254,7 +254,13 @@ def _tool_calls_from_text(content: str | None) -> list["ToolCall"]:
     for c in items:
         if not isinstance(c, dict):
             continue
-        fn = c.get("function") if isinstance(c.get("function"), dict) else c
+        f = c.get("function")
+        if isinstance(f, dict):
+            fn = f                                    # {"function": {"name", "arguments"}}
+        elif isinstance(f, str):                      # {"function": "<name>", "arguments": {...}}
+            fn = {"name": f, "arguments": c.get("arguments", c.get("parameters", c.get("args", {})))}
+        else:
+            fn = c                                    # {"name", "arguments"} flat
         name = fn.get("name")
         if not name or not isinstance(name, str):
             continue
