@@ -55,14 +55,71 @@ def _make_prompt_fn():
     return prompt_fn
 
 
+def _capabilities(tools) -> str:
+    """A short capability summary from the wired tools (nicer than dumping every tool name)."""
+    n = {getattr(t, "name", "") for t in tools}
+    caps = []
+    if n & {"grep", "glob", "read_file", "edit_file", "run_shell", "apply_patch"}:
+        caps.append("code")
+    if "web_search" in n:
+        caps.append("web")
+    if n & {"symbolic_math", "prove", "verify_math", "matrix_op"}:
+        caps.append("exact math + proofs")
+    if "lean_check" in n:
+        caps.append("Lean")
+    if n & {"python_exec", "load_dataset", "fit_model", "load_table"}:
+        caps.append("data science")
+    if any(name.startswith("mcp__") for name in n):
+        caps.append("MCP")
+    return " · ".join(caps) or "—"
+
+
 def _banner(cfg, tools, config, cwd, n_custom, mem_files, n_skills=0, preset=None, temperature=None) -> str:
-    custom = f"  (+{n_custom} custom cmds)" if n_custom else ""
-    skills = f"  ({n_skills} skills — /skills)" if n_skills else ""
-    approvals = f"{config.mode.value}/{config.sandbox.value}" if config else "?"
-    mem = ("  memory: " + ", ".join(p.name for p in mem_files)) if mem_files else ""
-    model = f"model={cfg.model}" + (f" [{preset}]" if preset else "") + (" greedy" if temperature == 0.0 else "")
-    return (f"genai-studio agent  ·  {model}  profile={cfg.profile}  approvals={approvals}\n"
-            f"cwd={cwd}{mem}{skills}\ntools: {', '.join(t.name for t in tools)}\n/help for commands{custom}\n")
+    """A welcoming, informative splash: framed header + version/tagline, aligned session info, a
+    capability summary, and next-step hints."""
+    from genai_studio import __version__
+
+    color = sys.stdout.isatty()
+
+    def c(s, code):
+        return f"\033[{code}m{s}\033[0m" if color and s else s
+
+    CY, DIM, BOLD, TITLE = "36", "2", "1", "1;36"
+    W, inner = 58, 56
+    ver = f"v{__version__}"
+    tag = "A tool-using agent over the Purdue GenAI Studio gateway"
+    bar = c("│", CY)
+    header = [
+        c("╭" + "─" * W + "╮", CY),
+        f"{bar} " + c("GenAI Studio · Agent".ljust(inner - len(ver)), TITLE) + c(ver, DIM) + f" {bar}",
+        f"{bar} " + c(tag.ljust(inner), DIM) + f" {bar}",
+        c("╰" + "─" * W + "╯", CY),
+    ]
+
+    def row(label, value):
+        return "  " + c(label.ljust(10), DIM) + value
+
+    model = str(cfg.model) + (f"  [{preset}]" if preset else "") + (c("  · greedy", DIM) if temperature == 0.0 else "")
+    ctx = []
+    if mem_files:
+        ctx.append("memory: " + ", ".join(p.name for p in mem_files))
+    if n_skills:
+        ctx.append(f"{n_skills} skills (/skills)")
+    ctx.append(f"{len(tools)} tools (/tools)")
+    hint = ("  " + c("Type a task, or ", DIM) + c("/help", BOLD) + c(" for commands", DIM)
+            + (c(f"  ·  {n_custom} custom", DIM) if n_custom else "") + c("  ·  /quit to exit", DIM))
+    info = [
+        "",
+        row("model", c(model, BOLD)),
+        row("profile", str(cfg.profile)),
+        row("approvals", f"{config.mode.value} / {config.sandbox.value}" if config else "—"),
+        row("cwd", str(cwd)),
+        row("context", "   ·   ".join(ctx)),
+        row("capable", c(_capabilities(tools), CY)),
+        "",
+        hint,
+    ]
+    return "\n".join(header + info)
 
 
 def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None) -> int:

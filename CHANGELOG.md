@@ -19,6 +19,8 @@ MCP client — connect to external MCP servers, gated (P1: stdio + tools).
   and the gateway key scrubbed from server env.
 - **`Agent.close()` + context manager** (generic `_closeables`) so `assemble_agent(mcp=…)` teardown is
   one call; `mcp=None` is byte-identical (no MCP import).
+- **REPL splash** — a framed, welcoming banner (version + tagline, aligned session info, a capability
+  summary instead of a raw tool dump, and next-step hints).
 
 ### Changed
 - **Python floor raised to `>=3.10`** (3.9 is EOL; required by the MCP SDK).
