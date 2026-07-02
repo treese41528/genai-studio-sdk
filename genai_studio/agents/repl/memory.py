@@ -1,6 +1,6 @@
-"""Project memory — auto-load ``AGENTS.md`` (and ``CLAUDE.md`` for compatibility) and inject into
-the system prompt; ``/init`` writes a starter ``AGENTS.md`` (the vendor-neutral convention — this is
-not tied to any one assistant).
+"""Project memory — auto-load ``AGENTS.md`` and inject into the system prompt; ``/init`` writes a
+starter ``AGENTS.md``. Vendor-neutral by design (the standard agents.md convention) — this harness is
+not tied to any one assistant, so it does NOT read another tool's ``CLAUDE.md``.
 
 Walks ancestor dirs root→cwd so the most specific (cwd) file is most salient. The combined text is
 appended to the agent's system prompt ONCE (the REPL strips ``system`` from threaded history, so it
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_NAMES = ("AGENTS.md", "CLAUDE.md")      # AGENTS.md is primary; CLAUDE.md still read for compatibility
+_NAMES = ("AGENTS.md",)                  # vendor-neutral project memory (not another tool's CLAUDE.md)
 
 _TEMPLATE = """# Project overview
 
@@ -32,10 +32,9 @@ def find_memory_files(start) -> list:
     """Memory files from the user global down to ``start`` (root→cwd order)."""
     start = Path(start).resolve()
     out: list = []
-    for user in (Path.home() / ".genai_studio" / "AGENTS.md",    # vendor-neutral global (primary)
-                 Path.home() / ".claude" / "CLAUDE.md"):         # compatibility
-        if user.is_file():
-            out.append(user)
+    user = Path.home() / ".genai_studio" / "AGENTS.md"           # vendor-neutral global memory
+    if user.is_file():
+        out.append(user)
     for d in reversed([start, *start.parents]):          # filesystem root -> cwd
         for name in _NAMES:
             p = d / name
