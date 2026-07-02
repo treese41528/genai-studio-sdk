@@ -196,6 +196,7 @@ class Agent:
     name: str | None = None  # default tool name when exposed via as_tool()
     guards: Sequence = ()  # before/after-tool hooks (deterministic policy seam)
     tool_search: Any = None  # opt-in deferred-tool config (ToolSearch); None = all tools eager
+    _closeables: list = field(default_factory=list, init=False, repr=False)  # attached resources (e.g. MCP managers)
 
     def __post_init__(self):
         self._registry = ToolRegistry(self.tools)
@@ -211,6 +212,23 @@ class Agent:
                     "output_schema requires pydantic: "
                     "pip install 'genai-studio-sdk[structured]'"
                 ) from e
+
+    def close(self):
+        """Tear down any attached resources (e.g. MCP server connections). No-op if none;
+        idempotent. Also usable as a context manager: ``with Agent(...) as a: ...``."""
+        for c in self._closeables:
+            try:
+                c.close()
+            except Exception:
+                pass
+        self._closeables = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
 
     # ── public sync entry point ──────────────────────────────────────────────
     def run(self, prompt, *, memory=None, budget=None, cancel=None) -> AgentResult:

@@ -7,7 +7,7 @@ name = "genai-studio-sdk"
 dynamic = ["version"]
 description = "A Python wrapper for Purdue's GenAI Studio API — chat, streaming, multi-turn conversations, embeddings, RAG, and a CLI."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Timothy Reese" }]
@@ -29,8 +29,9 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# Structured output (Agent.output_schema) — pydantic only, no scientific stack.
-structured = ["pydantic>=1.10"]
+# Structured output (Agent.output_schema) — pydantic only, no scientific stack. v2 (the MCP SDK
+# also requires pydantic>=2, so [mcp] + [structured] share the same major).
+structured = ["pydantic>=2"]
 # Data-science agents + tools: the heavy scientific stack lives ONLY here.
 # numpy is already a core dependency, so it is not repeated.
 datascience = [
@@ -50,8 +51,11 @@ math = ["sympy>=1.12"]
 # Sound theorem proving over arithmetic (prove / solve_constraints, and z3-backed verify_math).
 # ~30-50 MB MIT wheel; off by default.
 smt = ["z3-solver>=4.12"]
-test = ["pytest>=7", "pydantic>=1.10", "pyyaml", "sympy>=1.12", "z3-solver>=4.12"]
-dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,math,smt,test]", "pytest-cov"]
+# MCP client — connect to external MCP servers behind a Guard. Official SDK; needs Python 3.10+
+# and pydantic>=2 (shared with [structured]). Off by default; lazy-imported.
+mcp = ["mcp>=1.9,<2"]
+test = ["pytest>=7", "pydantic>=2", "pyyaml", "sympy>=1.12", "z3-solver>=4.12", "mcp>=1.9,<2"]
+dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,math,smt,mcp,test]", "pytest-cov"]
 
 [project.urls]
 Homepage = "https://github.com/treese41528/genai-studio-sdk"

@@ -68,12 +68,16 @@ def wire_capabilities(tools, *, cwd, client=None, model=None, memory_dir=None,
 
 def assemble_agent(client, profile="general", cwd=None, *, model=None, skills=True, memory=True,
                    defer=False, mode="auto", sandbox="workspace-write", prompt_fn=None,
-                   system_base="", memory_dir=None, max_steps=10, guards=(), studio=None, **agent_kw):
+                   system_base="", memory_dir=None, max_steps=10, guards=(), studio=None,
+                   mcp=None, allow_stdio=False, **agent_kw):
     """Single composition entry point — build profile tools + skills + recall-memory + optional
-    deferred-tool search, assemble the system prompt, and return a ready headless ``Agent``.
+    deferred-tool search + optional MCP servers, assemble the system prompt, and return a ready Agent.
 
     The same builders the REPL uses, in one call, so a headless caller configures an Agent
-    identically. Returns a plain ``Agent`` (adds no new state); wire manually for custom cases.
+    identically. ``mcp`` (a config dict / JSON path / ``MCPServerConfig`` list) attaches external MCP
+    tools — gated: the ``MCPGuard`` runs FIRST, tools are namespaced so approval always prompts, and
+    the manager is attached so ``agent.close()`` tears the servers down (``mcp=None`` ⇒ byte-identical,
+    no MCP import). Returns a plain ``Agent`` otherwise; wire manually for custom cases.
     """
     from pathlib import Path
 
@@ -84,9 +88,18 @@ def assemble_agent(client, profile="general", cwd=None, *, model=None, skills=Tr
     base_tools, approval_guard, _cfg = build_tools(
         profile, workspace_root=cwd, mode=ApprovalMode(mode), sandbox=SandboxPolicy(sandbox),
         prompt_fn=prompt_fn)
+    mcp_guard, mcp_mgr = (), None
+    if mcp is not None:
+        from .mcp import mcp_tools
+        mcp_tool_list, mcp_mgr = mcp_tools(mcp, allow_stdio=allow_stdio)
+        base_tools = [*base_tools, *mcp_tool_list]       # flow through the same registry/dedup/defer
+        mcp_guard = (mcp_mgr.guard,)                      # denies before approval prompts
     tools, blocks, tool_search, _ = wire_capabilities(
         base_tools, cwd=cwd, client=client, model=model, memory_dir=memory_dir,
         skills=skills, memory=memory, defer=defer, shared_guards=[approval_guard], studio=studio)
-    return Agent(client=client, tools=tools, system=assemble_system(system_base, *blocks),
-                 model=model, guards=[approval_guard, *guards], tool_search=tool_search,
-                 max_steps=max_steps, **agent_kw)
+    agent = Agent(client=client, tools=tools, system=assemble_system(system_base, *blocks),
+                  model=model, guards=[*mcp_guard, approval_guard, *guards], tool_search=tool_search,
+                  max_steps=max_steps, **agent_kw)
+    if mcp_mgr is not None:
+        agent._closeables.append(mcp_mgr)                # agent.close() tears down the servers (hybrid)
+    return agent

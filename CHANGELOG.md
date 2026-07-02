@@ -2,6 +2,28 @@
 
 All notable changes to `genai-studio-sdk`. This project follows [semantic versioning](https://semver.org).
 
+## [1.6.0] — 2026-07-02
+
+MCP client — connect to external MCP servers, gated (P1: stdio + tools).
+
+### Added
+- **MCP client** (`genai_studio/agents/mcp/`, `[mcp]` extra, official SDK, lazy-imported): connect to
+  MCP servers over **stdio**, snapshot `tools/list`, and expose them to the Agent. `mcp_tools(config,
+  allow_stdio=True)` → `(tools, MCPManager)`; or `assemble_agent(mcp=…)` wires + attaches it.
+  Fail-open on discovery (a dead server → zero tools, never crashes the build).
+- **Untrusted-by-construction security:** every tool is namespaced `mcp__<server>__<tool>`, which keeps
+  it out of the approval allowlists so `assess()` returns `_ASK` **before** the session-allow cache —
+  MCP tools **always re-prompt**, and a cached "always" grant can't survive a rug-pulled definition.
+  Plus an `MCPGuard` (server allowlist, runs before approval), a provenance banner as the first
+  description line (line-jumping), stdio spawning **opt-in** (`allow_stdio`) with the command shown,
+  and the gateway key scrubbed from server env.
+- **`Agent.close()` + context manager** (generic `_closeables`) so `assemble_agent(mcp=…)` teardown is
+  one call; `mcp=None` is byte-identical (no MCP import).
+
+### Changed
+- **Python floor raised to `>=3.10`** (3.9 is EOL; required by the MCP SDK).
+- **`[structured]` → `pydantic>=2`** (shared major with the MCP SDK).
+
 ## [1.5.0] — 2026-07-02
 
 Routing hardening — the orchestrator now has the knowledge *and* the workers to route for accuracy.
