@@ -23,6 +23,12 @@ def test_prove_algebraic_identity():
     assert prove.run({"claim": "(a+b)**2 == a**2 + 2*a*b + b**2"}).data["verdict"] == "proven"
 
 
+def test_prove_shows_a_proof_sketch():
+    # users want to SEE the proof, not just "PROVEN" — factor the difference
+    r = prove.run({"claim": "x**2 + y**2 >= 2*x*y"})
+    assert r.data["verdict"] == "proven" and "proof:" in r.content and "(x - y)**2" in r.content
+
+
 def test_prove_disproven_with_counterexample():
     r = prove.run({"claim": "x**2 >= x"})                    # false over reals (x = 1/2)
     assert r.data["verdict"] == "disproven" and "counterexample" in r.content

@@ -107,6 +107,30 @@ def z3_decide(claim: str, domain: str = "real", assume: str | None = None):
     return "unknown", None
 
 
+def _proof_sketch(claim: str) -> str:
+    """A human-readable proof for an (in)equality: factor the difference (e.g. x²+y²−2xy = (x−y)²),
+    or for an equality show both sides reduce equal. Empty string if nothing illuminating."""
+    try:
+        sp = _require("sympy", "math")
+        rel = _split_relation(claim)
+        if rel is None:
+            return ""
+        lhs, op, rhs = rel
+        L, R = _parse(lhs), _parse(rhs)
+        if op in ("ge", "gt", "le", "lt"):
+            diff = (L - R) if op in ("ge", "gt") else (R - L)     # the quantity shown to be ≥/> 0
+            fac = sp.factor(sp.simplify(diff))
+            sym = ">" if op in ("gt", "lt") else "≥"
+            if sp.sstr(fac) == sp.sstr(sp.expand(diff)):          # no nicer factored form → skip
+                return ""
+            return f"\n  proof: {sp.sstr(sp.expand(diff))} = {sp.sstr(fac)} {sym} 0"
+        if op == "eq":
+            return f"\n  proof: both sides simplify to {sp.sstr(sp.simplify(L))}"
+    except Exception:
+        pass
+    return ""
+
+
 @tool
 def prove(claim: str, domain: str = "real", assume: str | None = None) -> ToolResult:
     """PROVE a universally-quantified (in)equality with a SOUND solver (z3). Establishes the claim
@@ -121,7 +145,7 @@ def prove(claim: str, domain: str = "real", assume: str | None = None) -> ToolRe
     """
     verdict, ce = z3_decide(claim, domain, assume)
     if verdict == "proven":
-        return ToolResult(content=f"PROVEN (holds for all {domain} values): {claim}",
+        return ToolResult(content=f"PROVEN (holds for all {domain} values): {claim}{_proof_sketch(claim)}",
                           data={"verdict": "proven"})
     if verdict == "disproven":
         return ToolResult(content=f"DISPROVEN: {claim}\ncounterexample: {ce}",
