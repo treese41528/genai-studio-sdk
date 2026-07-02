@@ -2,6 +2,27 @@
 
 All notable changes to `genai-studio-sdk`. This project follows [semantic versioning](https://semver.org).
 
+## [1.5.0] — 2026-07-02
+
+Routing hardening — the orchestrator now has the knowledge *and* the workers to route for accuracy.
+
+### Added
+- **`ROUTING_GUIDE`** — the measured decision knowledge (which model per task type, greedy sampling
+  for reasoning models, compute+verify with the CAS tools, sample-filter-revote when check ≪ solve)
+  appended to `supervisor`/`Team` prompts by default, so the coordinator routes itself.
+- **`routed_team(client)`** — specialists pre-wired to role-optimal model + sampling + tools:
+  `math_specialist`, `reasoning_specialist` (greedy), grounded `research_specialist`, and an opt-in
+  `critic_specialist` (gpt-oss:120b — 4% hallucination, abstains rather than guess). All share one
+  client/rate-limiter; per-role models overridable. `examples/19_routed_team.py`.
+
+### Findings (`benchmarks/`)
+- **`math_specialist` bake-off** (`math_specialist_bakeoff.py`, n=24): qwen2.5:72b and llama3.3:70b
+  tie at **75% with 100% tool-use**, while llama4 — the tool-free GSM8K "champion" — **never calls the
+  CAS tools** (0% tool-use, 50%). The general routing crown does not transfer to a tool-using role;
+  role-specific defaults are set from this, not extrapolation.
+- **CAS-verification pays off only where check ≪ solve** (root-solving `+13.3 pp`; MATH-500 `+0.0 pp`),
+  and a *completeness*-aware filter converts pass@k → accuracy (`filt == pass@k` at every difficulty).
+
 ## [1.4.0] — 2026-07-01
 
 Capability + grounding round-out (all additive). Closes the coding/agentic-harness gaps vs Claude

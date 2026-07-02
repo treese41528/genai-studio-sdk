@@ -178,10 +178,14 @@ def supervisor(client, system: str, workers: Sequence[Agent], *,
                  system=sys_prompt, guards=guards, **agent_kwargs)
 
 
-# Benchmark-optimal defaults (routing study): a strong all-round manager, a fast+reliable math model,
-# a reasoning model run GREEDY, and a strong grounded research model. Override per gateway.
-ROUTED_DEFAULTS = {"manager": "qwen2.5:72b", "math": "qwen2.5:72b",
-                   "reasoning": "deepseek-r1:32b", "research": "qwen2.5:72b"}
+# Role-optimal defaults. Manager/research: the all-round champion (qwen2.5:72b). Reasoning: a
+# reasoning model run GREEDY. Math: qwen2.5:72b — a per-role BAKE-OFF (math_specialist_bakeoff.py, n=24)
+# found it + llama3.3:70b tie at 75% with 100% tool-use, while llama4 (the tool-FREE GSM8K champion)
+# NEVER calls the CAS tools (0% tool-use, 50%) — so the general routing crown does not transfer here.
+# Critic: gpt-oss:120b — 4% hallucination / 65% abstain, ideal for skeptical fact/answer checking.
+# Override any per gateway via routed_team(models={...}).
+ROUTED_DEFAULTS = {"manager": "qwen2.5:72b", "math": "qwen2.5:72b", "reasoning": "deepseek-r1:32b",
+                   "research": "qwen2.5:72b", "critic": "gpt-oss:120b"}
 
 
 def _math_worker(client, model, tracer):
@@ -225,10 +229,28 @@ def _research_worker(client, model, tracer):
     return Agent(client=client, model=model, name="research_specialist", system=system, tracer=tracer, tools=tools)
 
 
-_ROUTED_BUILDERS = {"math": _math_worker, "reasoning": _reasoning_worker, "research": _research_worker}
+def _critic_worker(client, model, tracer):
+    from .tools.general import final_answer
+    from .tools.symbolic import verify_math
+    tools = [verify_math, final_answer]
+    try:
+        from .tools.web import web_search, wikipedia_search
+        tools = [web_search, wikipedia_search, *tools]
+    except Exception:
+        pass
+    system = ("You are the CRITIC. Scrutinise a given claim or answer for errors: ground factual "
+              "claims with the search tools and check computations with verify_math. Be skeptical — "
+              "if you cannot confirm it, ABSTAIN rather than guess. End with a verdict: CONFIRMED, "
+              "REFUTED (with the flaw), or UNCERTAIN.")
+    return Agent(client=client, model=model, name="critic_specialist", system=system, tracer=tracer, tools=tools)
+
+
+_ROUTED_BUILDERS = {"math": _math_worker, "reasoning": _reasoning_worker,
+                    "research": _research_worker, "critic": _critic_worker}
 _ROUTED_DESC = {"math": "math_specialist (exact arithmetic/algebra/calculus/linear-algebra + proofs)",
                 "reasoning": "reasoning_specialist (hard multi-step reasoning, runs greedy)",
-                "research": "research_specialist (facts + multi-hop, grounded retrieval)"}
+                "research": "research_specialist (facts + multi-hop, grounded retrieval)",
+                "critic": "critic_specialist (fact-check/verify a claim or answer; abstains rather than guess)"}
 
 
 def routed_team(client, *, manager_model: str | None = None, include=("math", "reasoning", "research"),
@@ -239,9 +261,10 @@ def routed_team(client, *, manager_model: str | None = None, include=("math", "r
     pick, end-to-end.
 
     Specialists (choose via ``include``): ``math`` (CAS/prove tools), ``reasoning`` (a reasoning model
-    at greedy), ``research`` (grounded retrieval). Every worker AND the manager share ``client`` (the
-    one-rate-limiter invariant); each worker overrides only its ``model``. Override any model via
-    ``models={"reasoning": "qwq:latest", ...}`` or ``manager_model=``.
+    at greedy), ``research`` (grounded retrieval), ``critic`` (a low-hallucination model that
+    fact-checks/verifies and abstains rather than guess — opt-in). Every worker AND the manager share
+    ``client`` (the one-rate-limiter invariant); each worker overrides only its ``model``. Override any
+    model via ``models={"reasoning": "qwq:latest", ...}`` or ``manager_model=``.
 
     Args:
         client: the ONE shared client for the whole team.

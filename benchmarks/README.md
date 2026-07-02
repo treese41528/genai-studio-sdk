@@ -334,6 +334,24 @@ overstated `qwq` at 53%; the n=60 finalization corrected it to 38% — small-n s
 model swap) · "must not be wrong" → gpt-oss (4% halluc, at 10k tokens + 65% abstention) · default →
 qwen2.5:72b.
 
+### Per-role bake-off — the general crown doesn't transfer (`math_specialist_bakeoff.py`)
+
+The routing table above measures *tool-free* accuracy; it does **not** predict which model makes the
+best *tool-using* specialist. Running each candidate AS the `math_specialist` (CAS tools, greedy) on
+exact-math problems hard in-head (4×4 determinants, definite integrals, big powers), n=24 — scoring
+accuracy **and whether it actually called a tool**:
+
+| candidate | accuracy | tool-use | avg tokens |
+|---|---|---|---|
+| qwen2.5:72b | **75%** | 100% | 3777 |
+| llama3.3:70b | **75%** | 100% | 3852 |
+| llama4:latest | 50% | **0%** | 505 |
+
+llama4 — the tool-free GSM8K "champion" — **never once called a CAS tool**; it answers from memory
+(cheap, but wrong on the hard items). So `routed_team` sets its `math_specialist` from *this* data
+(qwen2.5:72b / llama3.3:70b), not the general table. Lesson: pick role models by a role-specific
+bake-off, not by extrapolating overall accuracy.
+
 **Caveats.** k=1 screen (directional, ±~10pp; the peer-judge + F-score make the *ordering*
 trustworthy); `grounded` condition only. A related finding: **grounding cuts hallucination when there
 IS an answer but INCREASES it on unanswerable / false-premise questions** (tools make the model

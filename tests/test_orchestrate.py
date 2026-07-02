@@ -93,6 +93,16 @@ def test_routed_team_include_and_model_override():
     assert "math_specialist" in names and "reasoning_specialist" not in names
 
 
+def test_routed_team_optin_critic_specialist():
+    from genai_studio.agents import routed_team
+    from genai_studio.agents.orchestrate import _critic_worker
+    c = _Dummy()
+    mgr = routed_team(c, include=("math", "critic"), tracer=NullTracer())
+    assert "critic_specialist" in {t.name for t in mgr.tools}
+    cr = _critic_worker(c, "gpt-oss:120b", NullTracer())
+    assert cr.model == "gpt-oss:120b" and cr.name == "critic_specialist"
+
+
 def test_supervisor_warns_on_mismatched_client():
     with pytest.warns(UserWarning, match="different ModelClient"):
         supervisor(_Dummy(), "s", [_agent(_Dummy(), name="x")])  # different clients
