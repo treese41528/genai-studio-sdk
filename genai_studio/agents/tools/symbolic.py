@@ -22,16 +22,20 @@ def _sp():
     return _require("sympy", "math")
 
 
-def _parse(expr: str):
+def _parse(expr: str, *, evaluate: bool = True):
     """Parse a math expression: implicit multiplication (2x → 2*x), `^` as power, `n!` factorial.
     Uses ``implicit_multiplication`` (NOT the ``_application`` variant, whose ``split_symbols`` mangles
     subscripted names — ``a1`` → ``a*1`` = ``a``, ``x1 + x2`` → ``3*x``). So ``x1``, ``a2`` stay single
-    symbols; write ``x*y`` for a product of two distinct variables."""
+    symbols; write ``x*y`` for a product of two distinct variables.
+
+    ``evaluate=False`` keeps the expression tree as WRITTEN (no CAS auto-simplification) — needed when
+    a domain-changing cancellation would be unsound (e.g. ``x**2/x**2`` must NOT collapse to ``1`` before
+    a proof, and a factored ``2*(x+1)`` must NOT distribute to ``2*x+2``)."""
     sp = _sp()
     from sympy.parsing.sympy_parser import (convert_xor, factorial_notation,
                                             implicit_multiplication, standard_transformations)
     tr = standard_transformations + (implicit_multiplication, convert_xor, factorial_notation)
-    return sp.parsing.sympy_parser.parse_expr(expr, transformations=tr)
+    return sp.parsing.sympy_parser.parse_expr(expr, transformations=tr, evaluate=evaluate)
 
 
 _RELS = [("==", "eq"), ("!=", "ne"), ("<=", "le"), (">=", "ge"), ("<", "lt"), (">", "gt")]
@@ -149,14 +153,21 @@ def verify_math(claim: str, assume: str | None = None, tol: float = 1e-12) -> To
                       "(for an integer-only claim try prove(domain='int'))", data={"verdict": None})
 
 
+def _factored_ok(sp, E, F) -> bool:
+    """F is a SOUND factorization of E: algebraically equal, a genuine product/power, and every factor
+    is a POLYNOMIAL (rejects non-polynomial `factors` like x*(x+1+1/x) for an irreducible poly)."""
+    return bool(sp.simplify(E - F) == 0 and (F.is_Mul or F.is_Pow)
+                and F.is_polynomial() and sp.expand(F) != F)
+
+
 def is_factorization(expression: str, factored: str) -> bool:
-    """True iff ``factored`` is algebraically equal to ``expression`` AND is genuinely factored
-    (a product/power, not the expanded polynomial re-stated). Sound; the checker behind the
+    """True iff ``factored`` is algebraically equal to ``expression`` AND is genuinely factored (a
+    product/power of POLYNOMIALS, not the expanded polynomial re-stated). Sound; the checker behind the
     ``check≪solve`` factorization arm (see :mod:`genai_studio.agents.verified`)."""
     try:
         sp = _sp()
-        E, F = _parse(expression), _parse(factored)
-        return bool(sp.simplify(E - F) == 0 and (F.is_Mul or F.is_Pow) and sp.expand(F) != F)
+        # parse the factored side UNEVALUATED so a GCF like 2*(x+1) isn't distributed to 2*x+2
+        return _factored_ok(sp, _parse(expression), _parse(factored, evaluate=False))
     except Exception:
         return False
 
@@ -174,15 +185,15 @@ def verify_factorization(expression: str, factored: str) -> ToolResult:
     """
     sp = _sp()
     try:
-        E, F = _parse(expression), _parse(factored)
+        E, F = _parse(expression), _parse(factored, evaluate=False)   # unevaluated: keep 2*(x+1) factored
     except Exception as e:
         return ToolResult(content="", error=f"could not parse: {e}")
     if sp.simplify(E - F) != 0:
         return ToolResult(content=f"INVALID: {sp.sstr(F)} expands to {sp.sstr(sp.expand(F))}, "
                           f"not {sp.sstr(sp.expand(E))}", data={"verdict": False, "reason": "not-equal"})
-    if not (F.is_Mul or F.is_Pow) or sp.expand(F) == F:
-        return ToolResult(content=f"NOT FACTORED: {sp.sstr(F)} equals {sp.sstr(E)} but is not a "
-                          "product — give a factored form like (x-1)*(x+1)",
+    if not (F.is_Mul or F.is_Pow) or not F.is_polynomial() or sp.expand(F) == F:
+        return ToolResult(content=f"NOT FACTORED: {sp.sstr(F)} is not a product of polynomials equal "
+                          f"to {sp.sstr(E)} — give a factored form like (x-1)*(x+1)",
                           data={"verdict": False, "reason": "not-factored"})
     return ToolResult(content=f"VALID factorization: {sp.sstr(E)} = {sp.sstr(F)}",
                       data={"verdict": True})

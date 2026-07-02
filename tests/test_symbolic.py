@@ -22,6 +22,14 @@ def test_verify_factorization_valid_wrong_and_unfactored():
     assert flat.data["verdict"] is False and flat.data["reason"] == "not-factored"
 
 
+def test_verify_factorization_soundness_nonpolynomial_and_gcf():
+    # soundness (adversarial): a non-polynomial "factor" (1/x) of an IRREDUCIBLE poly must be rejected
+    bad = verify_factorization.run({"expression": "x**2 + x + 1", "factored": "x*(x + 1 + 1/x)"})
+    assert bad.data["verdict"] is False
+    # and a genuine GCF factorization must be ACCEPTED (parsed unevaluated so it isn't distributed)
+    assert verify_factorization.run({"expression": "2*x + 2", "factored": "2*(x+1)"}).data["verdict"] is True
+
+
 def test_subscripted_variables_parse_as_symbols():
     # regression: a1 must be the symbol a1, not a*1 = a (the split_symbols mangling)
     assert _parse("a1") == sympy.Symbol("a1")

@@ -72,8 +72,10 @@ def _relation_to_z3(sp, z3, text: str, domain: str, env: dict):
     if rel is None:
         raise _Unsupported(f"not a relation: {text!r}")
     lhs, op, rhs = rel
-    return _REL[op](_to_z3(sp, z3, _parse(lhs), domain, env),
-                    _to_z3(sp, z3, _parse(rhs), domain, env))
+    # parse UNEVALUATED: a domain-changing cancellation (x**2/x**2 -> 1) would hide a singularity from
+    # _to_z3's negative-exponent guard and let z3 "prove" a claim that is false at the removed point.
+    return _REL[op](_to_z3(sp, z3, _parse(lhs, evaluate=False), domain, env),
+                    _to_z3(sp, z3, _parse(rhs, evaluate=False), domain, env))
 
 
 def z3_decide(claim: str, domain: str = "real", assume: str | None = None):

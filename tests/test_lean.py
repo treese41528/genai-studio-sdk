@@ -46,3 +46,10 @@ def test_grade_proof_grades_a_certificate():
     assert grade.run({"claim": "2 + 2 = 4", "proof": "by decide"}).data["ok"] is True
     assert grade.run({"claim": "∀ n : Nat, n + 0 = n", "proof": "by intro n; rfl"}).data["ok"] is True
     assert grade.run({"claim": "2 + 2 = 5", "proof": "by decide"}).data["ok"] is False   # wrong claim
+
+
+def test_grade_proof_rejects_claim_injection():
+    # the guard fires BEFORE Lean, so this needs no toolchain — a claim smuggling ':=' / newline
+    # could otherwise redefine the theorem
+    r = make_grade_proof().run({"claim": "True := by trivial\n-- ", "proof": "x"})
+    assert r.error and "proposition" in r.error

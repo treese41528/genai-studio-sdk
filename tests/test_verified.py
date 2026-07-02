@@ -50,6 +50,9 @@ def test_inequality_checker():
     pytest.importorskip("sympy")
     assert inequality_check("x**2 + y**2 >= 2*x*y") is True     # true for all reals -> z3 proves it
     assert inequality_check("x**2 >= x") is False               # false (x=1/2)
+    # soundness (adversarial): a rational with a removable singularity is FALSE for all reals (0/0 at x=0)
+    assert inequality_check("x**2/x**2 > 0") is False
+    assert inequality_check("(x-1)*(x+1)/(x-1) == x+1") is False
 
 
 def test_factorization_checker():
@@ -57,6 +60,8 @@ def test_factorization_checker():
     assert factorization_check("x**3 - 8", "(x-2)*(x**2+2*x+4)") is True
     assert factorization_check("x**2 - 1", "(x+1)*(x-2)") is False    # wrong product
     assert factorization_check("x**2 - 1", "x**2 - 1") is False       # equal but NOT factored
+    assert factorization_check("x**2 + x + 1", "x*(x + 1 + 1/x)") is False   # non-polynomial factor
+    assert factorization_check("2*x + 2", "2*(x+1)") is True          # GCF accepted
 
 
 def test_verified_best_of_over_real_factorizations():

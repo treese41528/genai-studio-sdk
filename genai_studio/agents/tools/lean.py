@@ -87,6 +87,9 @@ def make_grade_proof(*, lean: str = "lean", timeout: float = 40):
             proof: the proof — a term or ``by`` block, e.g. "by decide", "by omega", "fun n => rfl".
             imports: optional import lines (e.g. "import Mathlib") when the proof needs them.
         """
+        if ":=" in claim or "\n" in claim.strip():        # the claim is a PROPOSITION, not a definition
+            return ToolResult(content="", error="claim must be a single proposition (no ':=' or newlines); "
+                              "put the proof in the `proof` argument")
         head = (imports.strip() + "\n") if imports.strip() else ""
         code = f"{head}theorem grade_thm : {claim} := {proof.strip()}\n"
         return checker.run({"code": code})
