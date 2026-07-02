@@ -389,5 +389,31 @@ export GENAI_STUDIO_API_KEY=...; export GENAI_STUDIO_RPM=20
 python benchmarks/math_selfconsist.py --model qwen2.5:72b --n 40 --k 8 --stratify subject
 ```
 
+**Result (n=40, qwen2.5:72b):** bare 50.0% / maj@8 52.5% / cas_verified 52.5%. Self-consistency gives
+`+2.5 pp`; **CAS-verify gives `+0.0 pp` — `cas` matched `maj` on all 40 problems.** On MATH-500,
+*checking an answer ≈ re-deriving it*, and the LLM verifier correlates with the solver, so it adds no
+independent signal (it rubber-stamps the plurality).
+
+### The `check ≪ solve` payoff — root-solving (`root_solve_eval.py`)
+
+The verifier's value depends entirely on whether **checking is cheaper and more independent than
+solving**. Root-solving is the clean case: solving means factoring a quartic; *checking* a proposed
+root means one substitution. Generates polynomials with known integer roots; the `prove_filtered` arm
+is the real PROVE mechanism — **discard every sample whose proposed roots don't all satisfy the
+equation** (deterministic sympy substitution, independent of the solve), then majority-vote survivors.
+
+```bash
+python benchmarks/root_solve_eval.py --n 30 --k 8
+```
+
+**Result (n=30, qwen2.5:72b):** bare 63.3% / maj@8 73.3% / **prove_filtered 86.7%** (pass@8 ceiling
+90.0%). Self-consistency `+10 pp`; **PROVE-filter `+13.3 pp` (filtered − maj); total `+23.3 pp`.** The
+filter threw out 24% of samples and `filtered` landed within ~3 pp of the pass@8 ceiling.
+
+**The contrast is the finding:** same tools, same model — CAS-verify `+0.0 pp` on MATH-500 (check ≈
+solve) vs `+13.3 pp` on root-solving (check ≪ solve). CAS/SMT/Lean verification pays off precisely
+where checking is cheap and independent (roots, inequalities, factorizations, proofs), and not on
+reasoning-bound answer-matching — matching Tao's generate/verify division of labour.
+
 For **formal proof** (not answer-matching), `examples/18_lean_prove.py` runs the Lean 4 kernel-checked
 write→check→repair loop.
