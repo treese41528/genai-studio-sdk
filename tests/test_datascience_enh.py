@@ -9,8 +9,20 @@ import pytest
 pytest.importorskip("pandas")   # the DS tool modules import the scientific stack at module load
 
 from genai_studio.agents.datascience import data_analyst
-from genai_studio.agents.datascience.tools import make_datascience_tools
+from genai_studio.agents.datascience.tools import make_datascience_tools, make_verify_stat
 from genai_studio.agents.profiles import build_tools
+
+
+def test_verify_stat_recomputes_a_claimed_number():
+    import pandas as pd
+    ns = {"df": pd.DataFrame({"x": [1, 2, 3, 4], "y": [1, 0, 1, 0]})}
+    vs = make_verify_stat(ns)
+    assert vs.run({"expression": "df['x'].mean()", "expected": 2.5}).data["verdict"] is True
+    assert vs.run({"expression": "(df['y'] > 0).mean()", "expected": 0.5}).data["verdict"] is True
+    mismatch = vs.run({"expression": "df['x'].mean()", "expected": 9.9})
+    assert mismatch.data["verdict"] is False and mismatch.data["actual"] == 2.5
+    assert vs.run({"expression": "df", "expected": 1}).error            # not a single number
+    assert vs.run({"expression": "df['nope'].sum()", "expected": 0}).error   # bad expression -> error, not crash
 
 
 def test_make_datascience_tools_full_set():
