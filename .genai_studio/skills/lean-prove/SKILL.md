@@ -1,8 +1,12 @@
 ---
 name: lean-prove
 description: Prove a mathematical statement rigorously in Lean 4 (with mathlib when available), checked by the kernel. Use whenever a claim must be PROVEN — not just numerically checked: real/polynomial inequalities, algebraic identities, number theory, analysis, induction. Find lemmas with search_lemmas, write Lean 4, run lean_check, and repair from the compiler's errors until the kernel accepts it.
-allowed-tools: [search_lemmas, lean_check, grade_proof]
 ---
+
+<!-- In-context (no allowed-tools): the guidance loads into the main agent so it proves with its
+     full toolset (search_lemmas + the mathlib-backed lean_check) AND gives the detailed final
+     explanation itself, rather than handing off to an isolated child that returns only a summary. -->
+
 
 # Proving in Lean 4 + mathlib (kernel-checked)
 
@@ -18,7 +22,9 @@ back to the core tactics `decide`/`omega`/`rfl`/`simp`/`intro`/`exact`.)
 4. On error: **read it** (`line:col: error: …`), pick a *different* tactic or lemma — **never resubmit a
    proof that already failed** — and re-check.
 5. Need a library fact? **`search_lemmas`** by concept, then cite it (`exact <name>` / `apply <name>` / `rw [<name>]`).
-6. Report the checked theorem, or say honestly it's out of reach — don't fake it.
+6. In your FINAL answer, show the verified Lean theorem AND explain the argument in plain math — why
+   it is true, and what the key tactic/lemma does — not just "it was proven." If it's genuinely out of
+   reach, say so honestly; don't fake it.
 
 ## Tactic decision tree (try in this order)
 | Goal shape | First tactic |

@@ -42,6 +42,14 @@ def test_search_lemmas_keyword_ranks():
         not tool.run({"query": "zzz nomatch qqq"}).data                    # no hit -> no names
 
 
+def test_search_lemmas_digit_word_aliasing():
+    # a query with a DIGIT must match a lemma whose name spells the number as a WORD ('2' <-> 'two')
+    idx = [LemmaDecl("irrational_sqrt_two", "Irrational (Real.sqrt 2)", "M", ""),
+           LemmaDecl("mul_comm", "a * b = b * a", "M", "")]
+    tool = make_search_lemmas(idx)
+    assert "irrational_sqrt_two" in tool.run({"query": "sqrt 2 irrational", "k": 2}).data["names"]
+
+
 def test_search_lemmas_index_is_lazy():
     calls = {"n": 0}
     def load():

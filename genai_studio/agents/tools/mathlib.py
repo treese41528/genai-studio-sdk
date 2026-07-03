@@ -116,8 +116,25 @@ def build_lemma_index(project: str, *, cache: str | None = None, rebuild: bool =
 
 
 # ── search_lemmas (hybrid keyword + optional embedding retrieval) ─────────────────────────────────
+_NUM_WORDS = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
+              "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten"}
+_WORD_NUM = {v: k for k, v in _NUM_WORDS.items()}
+
+
 def _tokens(s: str) -> set:
-    return {w for w in re.split(r"[^A-Za-z0-9]+", s.lower()) if len(w) > 1}
+    """Search tokens, with digit<->word aliasing so a query "sqrt 2 irrational" matches the mathlib
+    lemma `irrational_sqrt_two` (names spell numbers as words; a lone '2' is otherwise dropped)."""
+    toks: set = set()
+    for w in re.split(r"[^A-Za-z0-9]+", s.lower()):
+        if not w:
+            continue
+        if len(w) > 1:
+            toks.add(w)
+        if w in _NUM_WORDS:                              # 2 -> {2, two}
+            toks.update({w, _NUM_WORDS[w]})
+        elif w in _WORD_NUM:                             # two -> {two, 2}
+            toks.update({w, _WORD_NUM[w]})
+    return toks
 
 
 def make_search_lemmas(index, *, embedder=None, k: int = 8, prefilter: int = 40):
