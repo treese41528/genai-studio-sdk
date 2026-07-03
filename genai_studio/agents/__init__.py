@@ -77,7 +77,7 @@ from .team import Team
 from .verify import VERIFY_PROMPT, verifier
 from .verified import VerifiedPick, factorization_check, inequality_check, verified_best_of
 from .panel import (Critic, CriticVote, Verdict, critic_gate, critic_panel, panel_tool,
-                    DEFAULT_LENSES, LENS_PROMPTS, REFUTE_PROMPT)
+                    DEFAULT_LENSES, LENS_PROMPTS, REFUTE_PROMPT, STATS_LENSES)
 from .compose import assemble_agent, assemble_system, wire_capabilities
 from .presets import DEFAULT_PRESET, PRESETS, Preset, resolve_preset
 from .skills import Skill, SkillBundle, build_skill_tools, load_skills, render_skills_catalog

@@ -24,16 +24,21 @@ def tool_hash(spec) -> str:
 
 
 class MCPGuard(Guard):
-    """Deny ``mcp__*`` calls to non-allowlisted servers (pass-through for non-MCP tools)."""
+    """Deny ``mcp__*`` calls to non-allowlisted servers OR to tools whose definition drifted since
+    connect (rug-pull defense). Pass-through for non-MCP tools."""
 
     def __init__(self, *, allow_servers, manifest=None):
         self.allow_servers = set(allow_servers)
         self.manifest = dict(manifest or {})     # namespaced_name -> definition hash (captured at connect)
+        self.drifted: set = set()                # names whose def changed/vanished on re-list (P3, via resync)
 
     def before_tool(self, call):
         name = getattr(call, "name", "") or ""
         if not name.startswith("mcp__"):
             return ALLOW                          # not ours; let other guards/approval decide
+        if name in self.drifted:                  # definition changed since we pinned it -> rug-pull
+            return deny(f"MCP tool {name!r} changed definition since connect (possible rug-pull); "
+                        "reconnect to re-approve it")
         server = server_of(name)
         if server not in self.allow_servers:
             return deny(f"MCP server {server!r} is not on the allowlist")

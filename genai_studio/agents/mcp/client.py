@@ -69,15 +69,12 @@ class MCPConnection:
         _require_mcp()
         from contextlib import AsyncExitStack
 
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
+        from mcp import ClientSession
 
         self._stop = asyncio.Event()
-        params = StdioServerParameters(command=self.config.command, args=list(self.config.args),
-                                       env=self.config.env or None)
         try:
             async with AsyncExitStack() as stack:    # entered + exited in THIS task -> no cancel-scope error
-                read, write = await stack.enter_async_context(stdio_client(params))
+                read, write = await self._open_transport(stack)
                 self._session = await stack.enter_async_context(ClientSession(read, write))
                 await self._session.initialize()
                 self._ready.set()
@@ -85,6 +82,25 @@ class MCPConnection:
         except Exception as e:
             self._error = e
             self._ready.set()
+
+    async def _open_transport(self, stack):
+        """Open the configured transport and return (read, write). stdio spawns a subprocess;
+        streamable-http connects to a URL with optional static ``headers`` (a Bearer token is the simple
+        auth path — full OAuth is a documented extension)."""
+        t = self.config.transport
+        if t == "stdio":
+            from mcp import StdioServerParameters
+            from mcp.client.stdio import stdio_client
+            params = StdioServerParameters(command=self.config.command, args=list(self.config.args),
+                                           env=self.config.env or None)
+            read, write, *_ = await stack.enter_async_context(stdio_client(params))
+            return read, write
+        if t in ("http", "streamable-http", "streamablehttp"):
+            from mcp.client.streamable_http import streamablehttp_client
+            read, write, *_ = await stack.enter_async_context(
+                streamablehttp_client(self.config.url, headers=dict(self.config.headers or {})))
+            return read, write
+        raise ValueError(f"unsupported MCP transport {t!r}")
 
     def _submit(self, coro, timeout):
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
@@ -119,14 +135,23 @@ class MCPManager:
     @classmethod
     def connect_all(cls, configs, *, allow_stdio: bool = False, call_timeout: float = 30.0):
         conns, tools, manifest, allow = [], [], {}, set()
+        _http = ("http", "streamable-http", "streamablehttp")
         for cfg in configs:
-            if cfg.transport != "stdio":
-                log.warning("MCP %r: transport %r unsupported in P1 (stdio only); skipped",
+            if cfg.transport == "stdio":
+                if not allow_stdio:                   # RCE-on-connect class -> opt-in
+                    log.warning("MCP %r: stdio spawning is opt-in — pass allow_stdio=True to run %r; skipped",
+                                cfg.name, cfg.command)
+                    continue
+            elif cfg.transport in _http:
+                if not str(cfg.url or "").startswith(("http://", "https://")):
+                    log.warning("MCP %r: streamable-http needs a http(s) url (got %r); skipped",
+                                cfg.name, cfg.url)
+                    continue
+                # NOTE: an http endpoint is a network/SSRF surface — private-IP blocking is deferred P2
+                # hardening; for now the operator vets the configured URL (like the stdio command).
+            else:
+                log.warning("MCP %r: transport %r unsupported (stdio | streamable-http); skipped",
                             cfg.name, cfg.transport)
-                continue
-            if not allow_stdio:
-                log.warning("MCP %r: stdio spawning is opt-in — pass allow_stdio=True to run %r; skipped",
-                            cfg.name, cfg.command)
                 continue
             try:
                 conn = MCPConnection(cfg, call_timeout=min(call_timeout, cfg.timeout)).connect()
@@ -145,6 +170,40 @@ class MCPManager:
                 tools.append(t)
                 manifest[t.name] = tool_hash(t.spec)
         return tools, cls(conns, tools, MCPGuard(allow_servers=allow, manifest=manifest))
+
+    def resync(self):
+        """P3 drift check: re-list every server's tools and compare their definition hashes to the
+        manifest pinned at connect. A tool whose definition CHANGED — or VANISHED — is marked DRIFTED
+        in the guard, so the loop denies further calls to it (rug-pull defense). NEW tools are reported
+        but NOT auto-trusted (they'd need a reconnect to be approved). Returns a summary dict. Call this
+        on a ``tools/list_changed`` notification or periodically. Never raises."""
+        from .mapping import to_tool
+        changed, removed, added, seen = [], [], [], set()
+        for conn in self._connections:
+            try:
+                current = conn.list_tools()
+            except Exception as e:
+                log.warning("MCP %r resync: re-list failed: %s", conn.config.name, e)
+                continue
+            for mt in current:
+                try:
+                    spec = to_tool(conn.config.name, mt, conn.call).spec
+                except ValueError:
+                    continue
+                seen.add(spec.name)
+                h = tool_hash(spec)
+                if spec.name not in self.guard.manifest:
+                    added.append(spec.name)
+                elif h != self.guard.manifest[spec.name]:
+                    changed.append(spec.name)
+                    self.guard.drifted.add(spec.name)
+        for name in self.guard.manifest:              # pinned tools no longer offered -> also drift
+            if name not in seen:
+                removed.append(name)
+                self.guard.drifted.add(name)
+        if changed or removed:
+            log.warning("MCP resync: %d changed, %d removed -> quarantined (denied)", len(changed), len(removed))
+        return {"changed": changed, "removed": removed, "added": added}
 
     def close(self):
         for c in self._connections:

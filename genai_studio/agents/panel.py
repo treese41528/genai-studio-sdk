@@ -24,10 +24,23 @@ from .tool import ToolResult, tool
 
 DEFAULT_LENSES = ("correctness", "safety", "repro")
 
+STATS_LENSES = ("assumptions", "power", "multiplicity", "leakage", "confounding")
+
 LENS_PROMPTS = {
     "correctness": "Focus on FACTUAL and LOGICAL correctness: is any claim false, unsupported, or a non-sequitur?",
     "safety": "Focus on SAFETY and side effects: could acting on this cause data loss, a security issue, or irreversible harm?",
     "repro": "Focus on REPRODUCIBILITY and completeness: are steps or assumptions missing, ambiguous, or unverifiable?",
+    # statistical lenses (for data-science conclusions)
+    "assumptions": "Focus on STATISTICAL ASSUMPTIONS: is the test/model valid for this data (independence, "
+                   "normality or large-n, equal variance, linearity)? Were violated assumptions ignored?",
+    "power": "Focus on SAMPLE SIZE and POWER: is n large enough to support this conclusion? Is a "
+             "non-significant result being read as 'no effect' when the study is simply underpowered?",
+    "multiplicity": "Focus on MULTIPLE COMPARISONS / p-hacking: were many tests run without correction, or "
+                    "was the hypothesis chosen after seeing the data? A 'significant' result may be a false positive.",
+    "leakage": "Focus on DATA LEAKAGE and evaluation: was performance measured on held-out data? Does any "
+               "feature encode the target or use future information? Is imbalance masked by bare accuracy?",
+    "confounding": "Focus on CAUSAL over-reach: is an association being reported as causation? Are there obvious "
+                   "confounders or selection effects that undercut the claim?",
 }
 
 REFUTE_PROMPT = """\
