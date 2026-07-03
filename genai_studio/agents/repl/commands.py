@@ -9,6 +9,7 @@ command was handled in-process (no model turn), otherwise ``prompt`` is sent to 
 from __future__ import annotations
 
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -400,15 +401,32 @@ def _doctor(ctx, arg):
     try:
         from ..tools.lean import lean_available
         print(f"  {'✓' if lean_available() else '·'} Lean toolchain (lean_check)")
+        from ..tools.mathlib import mathlib_project
+        proj = mathlib_project()
+        print(f"  {'✓' if proj else '·'} mathlib project" + (f" ({proj})" if proj else " (search_lemmas)"))
     except Exception:
         pass
-    try:
-        from ..client import Message
-        msg = Message.user("ping") if hasattr(Message, "user") else Message(role="user", content="ping")
-        ctx.client.complete([msg], model=ctx.agent.model, max_tokens=1)
+    # gateway ping — thread-guarded so /doctor NEVER hangs on a slow/dropped request
+    box: dict = {}
+
+    def _ping():
+        try:
+            from ..client import Message
+            msg = Message.user("ping") if hasattr(Message, "user") else Message(role="user", content="ping")
+            ctx.client.complete([msg], model=ctx.agent.model, max_tokens=1)
+            box["ok"] = True
+        except Exception as e:
+            box["err"] = f"{type(e).__name__}: {str(e)[:60]}"
+
+    t = threading.Thread(target=_ping, daemon=True)
+    t.start()
+    t.join(8)
+    if t.is_alive():
+        print("  · gateway: no response in 8s (slow or unreachable)")
+    elif box.get("ok"):
         print("  ✓ gateway reachable")
-    except Exception as e:
-        print(f"  · gateway: {type(e).__name__}: {str(e)[:60]}")
+    else:
+        print(f"  · gateway: {box.get('err', 'error')}")
     print(f"session: model={ctx.agent.model}  tools={len(ctx.tools)}  history={len(ctx.history)} msgs")
     return CommandResult()
 

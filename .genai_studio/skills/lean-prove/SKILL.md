@@ -37,6 +37,10 @@ back to the core tactics `decide`/`omega`/`rfl`/`simp`/`intro`/`exact`.)
 | definitional / computational | `rfl`, `decide` (small only), `simp` |
 
 ## Lean 4 syntax — must-knows (these differ from Lean 3, the #1 source of errors)
+- **Name your theorem freshly** — `theorem thm : … := …`. NEVER reuse a mathlib lemma's name (e.g.
+  `irrational_sqrt_two`, `add_comm`): with `import Mathlib` it is already declared, so redeclaring it
+  errors `'…' has already been declared`. To USE that lemma, cite it on the right: `theorem thm :
+  Irrational (Real.sqrt 2) := irrational_sqrt_two`.
 - Lambda is `fun x => e` (or `λ x => e`). **`λ x, e` is a syntax error.**
 - `calc` steps use **`:=`**, not `:`  →  `calc a ≤ b := h1` then `  _ < c := by nlinarith`.
 - `induction n with | zero => … | succ k ih => …` (structured cases; not `induction n with k ih`).
