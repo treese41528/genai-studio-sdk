@@ -16,6 +16,13 @@ Post-2.0 enhancements — data-science submodule brought onto the 2.0 framework,
 - **Data-science 2.0 (P1.1):** **`verify_stat`** — the data analog of `verify_math` (check≪solve): it
   re-computes a claimed pandas/numpy statistic over the live namespace and confirms it, so the agent
   verifies every number it reports instead of confabulating one. Bound into the DS tools; read-only.
+- **Data-science 2.0 (P1.2/P1.3/P2):** a **statistical critic panel** (`stats_panel_tool` / the
+  `STATS_LENSES` assumptions·power·multiplicity·leakage·confounding; `data_analyst(review=True)`) that
+  stress-tests a conclusion before it's reported; **recall memory** (`data_analyst(remember=True)`) so
+  schema/findings persist across turns; **`data_science_team`** — a supervisor that decomposes a task
+  across explorer/modeler/statistician specialists (attacks the multi-hop gap); and
+  `data_analyst(database=)` for a read-only `sql_query`. The DS submodule is now fully on the 2.0
+  framework. (Deferred: private-IP SSRF block for MCP http + MCP OAuth/resources/prompts remain.)
 - **MCP P3 — drift/rug-pull enforcement:** `MCPManager.resync()` re-lists each server's tools and compares
   definition hashes to the manifest pinned at connect; a **changed or vanished** tool is quarantined
   (`MCPGuard.drifted`) so the loop denies it. Call on `tools/list_changed` or periodically.
