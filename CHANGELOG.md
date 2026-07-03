@@ -2,6 +2,27 @@
 
 All notable changes to `genai-studio-sdk`. This project follows [semantic versioning](https://semver.org).
 
+## [Unreleased]
+
+Post-2.0 enhancements — data-science submodule brought onto the 2.0 framework, and MCP P2/P3.
+(Per `genai-studio-datascience-enhancements.md`; fold into the 2.0 PR or ship as 2.0.1.)
+
+### Added
+- **Data-science 2.0 (P0):** a **`datascience` REPL profile** (`genai-studio agent --profile datascience`
+  — full DS stack + math grounding + read/search/web, no codebase-write tools); `data_analyst(sandboxed=)`
+  swaps in the hardened subprocess python_exec; `make_datascience_tools()` (shared by both); and three
+  in-context DS **skills** (eda / hypothesis-testing / regression-modeling) teaching rigorous workflows +
+  assumption checks.
+- **Data-science 2.0 (P1.1):** **`verify_stat`** — the data analog of `verify_math` (check≪solve): it
+  re-computes a claimed pandas/numpy statistic over the live namespace and confirms it, so the agent
+  verifies every number it reports instead of confabulating one. Bound into the DS tools; read-only.
+- **MCP P3 — drift/rug-pull enforcement:** `MCPManager.resync()` re-lists each server's tools and compares
+  definition hashes to the manifest pinned at connect; a **changed or vanished** tool is quarantined
+  (`MCPGuard.drifted`) so the loop denies it. Call on `tools/list_changed` or periodically.
+- **MCP P2 — streamable-http transport:** `MCPConnection` now routes by `config.transport` — stdio
+  (opt-in) or **streamable-http** (connects to `config.url` with static `headers`; a Bearer token is the
+  simple auth path). Deferred: full OAuth, private-IP SSRF blocking, resources→tools / prompts→skills.
+
 ## [2.0.0] — 2026-07-02
 
 Consolidation release. Everything from the `agentic-sdk` line — the multi-agent framework, the
