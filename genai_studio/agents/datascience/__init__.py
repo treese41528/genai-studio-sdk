@@ -20,29 +20,23 @@ from genai_studio.agents import Agent
 from .prompts import DATA_ANALYST_SYSTEM
 
 
-def data_analyst(client, *, model: str = "qwen2.5:72b", **kw) -> Agent:
+def data_analyst(client, *, model: str = "qwen2.5:72b", sandboxed: bool = False, **kw) -> Agent:
     """Pre-assembled data-science agent: python_exec + load_dataset + load_table
-    (your own CSV/Parquet/Excel/JSON, sharing one namespace) + fit_model + plot. A
-    thin factory over the core ``Agent``. For SQL or R, add ``make_sql_query(db)`` /
-    ``make_r_exec()`` from ``.tools.io_tools`` / ``.tools.r_exec``.
+    (your own CSV/Parquet/Excel/JSON, sharing one namespace) + describe_data + fit_model +
+    hypothesis_test + plot, plus exact-math grounding (verify_math/symbolic_math/matrix_op). A thin
+    factory over the core ``Agent``. For SQL or R, add ``make_sql_query(db)`` / ``make_r_exec()``.
+
+    ``sandboxed=True`` runs python_exec in the hardened subprocess sandbox (Unix-only; keeps its own
+    persistent state, so it does not share the load_dataset namespace).
     """
     # Imported lazily so importing this package stays light.
     from genai_studio.agents.tools import calculator, final_answer
-    from .tools.datasets import make_load_dataset
-    from .tools.describe import describe_data
-    from .tools.io_tools import make_load_table
-    from .tools.modeling import fit_model
-    from .tools.plotting import plot
-    from .tools.python_exec import make_python_exec
-    from .tools.stats import hypothesis_test
 
     from ..tools.symbolic import matrix_op, symbolic_math, verify_math
+    from .tools import make_datascience_tools
 
-    namespace: dict = {}
-    tools = [make_python_exec(namespace), make_load_dataset(namespace),
-             make_load_table(namespace), describe_data,
-             fit_model, hypothesis_test, plot, calculator,
-             verify_math, symbolic_math, matrix_op, final_answer]
+    tools = [*make_datascience_tools({}, sandboxed=sandboxed),
+             calculator, verify_math, symbolic_math, matrix_op, final_answer]
     return Agent(client=client, model=model, tools=tools, system=DATA_ANALYST_SYSTEM, **kw)
 
 

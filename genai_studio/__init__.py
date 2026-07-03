@@ -3073,7 +3073,7 @@ Examples:
                               help="One-shot task (omit for an interactive session)")
     agent_parser.add_argument("--system", "-s", type=str, metavar="PROMPT",
                               help="Extra system prompt prepended to the agent's instructions")
-    agent_parser.add_argument("--profile", choices=["research", "coding", "general"],
+    agent_parser.add_argument("--profile", choices=["research", "coding", "general", "datascience"],
                               default="general", help="Tool profile (default: general)")
     agent_parser.add_argument("--approval", choices=["suggest", "auto", "full"],
                               default="suggest", help="Approval mode (default: suggest)")

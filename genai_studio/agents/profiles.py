@@ -69,13 +69,16 @@ def build_tools(profile: str = "general", *, workspace_root=None,
     except RuntimeError:                            # non-Unix (shell + background)
         pass
 
-    data: list = []
+    data: list = []          # light DS (general/coding): exec + loaders
+    ds_full: list = []       # full DS (datascience profile): + describe/fit/hypothesis_test/plot
     if include_datascience:
         try:
+            from .datascience.tools import make_datascience_tools
             from .datascience.tools.datasets import make_load_dataset
             from .datascience.tools.io_tools import make_load_table
             from .datascience.tools.python_exec import make_python_exec
             data = [make_python_exec(namespace), make_load_table(namespace), make_load_dataset(namespace)]
+            ds_full = make_datascience_tools(namespace)
         except Exception:
             pass
 
@@ -83,6 +86,8 @@ def build_tools(profile: str = "general", *, workspace_root=None,
         tools = research + [read_file] + search + plan + math   # read + explore (no writes)
     elif profile == "coding":
         tools = research + coding + search + data + plan + math
+    elif profile == "datascience":                  # analysis-first: full DS stack + math grounding
+        tools = ds_full + math + [read_file] + search + plan + research
     else:                                           # general
         tools = research + coding + search + data + plan + math
 
