@@ -2,10 +2,10 @@
 
 All notable changes to `genai-studio-sdk`. This project follows [semantic versioning](https://semver.org).
 
-## [Unreleased]
+## [2.0.1] — 2026-07-03
 
-Post-2.0 enhancements — data-science submodule brought onto the 2.0 framework, and MCP P2/P3.
-(Per `genai-studio-datascience-enhancements.md`; fold into the 2.0 PR or ship as 2.0.1.)
+Post-2.0 enhancements — the data-science submodule brought fully onto the 2.0 framework, and MCP P2/P3.
+(Per `genai-studio-datascience-enhancements.md`.)
 
 ### Added
 - **Data-science 2.0 (P0):** a **`datascience` REPL profile** (`genai-studio agent --profile datascience`

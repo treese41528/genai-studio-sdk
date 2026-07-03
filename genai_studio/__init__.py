@@ -192,7 +192,7 @@ from openai import OpenAI
 #
 # ════════════════════════════════════════════════════════════════════════════
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 # Base URL for Purdue's GenAI Studio instance
 # This runs Open WebUI with LiteLLM backend
