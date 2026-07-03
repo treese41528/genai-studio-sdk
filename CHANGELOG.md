@@ -2,6 +2,26 @@
 
 All notable changes to `genai-studio-sdk`. This project follows [semantic versioning](https://semver.org).
 
+## [2.0.0] — 2026-07-02
+
+Consolidation release. Everything from the `agentic-sdk` line — the multi-agent framework, the
+Claude-Code-style meta-capabilities (skills / recall memory / deferred tools), exact-math + sound-proof
+grounding, the MCP client (1.6), the generalized check≪solve verified-best-of primitive (1.7), the
+optional Lean + mathlib proof track (1.8), and a much richer interactive REPL — brought together and
+documented. See the rewritten **[README.md](README.md)** for the full user + developer guide (using the
+interface, how it works and why, and how to extend each subsystem with code locations).
+
+### Added since 1.8.0
+- **Rewritten README** — a thorough 2.0 guide: Part I (gateway client, the `genai-studio agent` REPL
+  with all flags + 27 slash commands + MCP setup, the CLI), Part II (the four seams and the design
+  rationale for guards/approval, meta-capabilities, orchestration, verification, math/Lean/mathlib,
+  MCP), Part III (extending it — a table mapping every extension to the exact file + a worked example),
+  a module-by-module code map, and suggested reading.
+- **REPL polish** — proofs/derivations now require a step-by-step explanation (not a bare verdict);
+  JSON-envelope answer leaks are unwrapped and forbidden; `/doctor` is timeout-guarded; the `lean-prove`
+  skill runs in-context (detailed explanations) with a theorem-name-collision rule; `search_lemmas`
+  gained digit↔word aliasing; a free-chat quality eval (`benchmarks/free_chat_eval.py`).
+
 ## [1.8.0] — 2026-07-02
 
 Optional Lean + **mathlib** proof track — real competition-math proving, gated on a mathlib install.
