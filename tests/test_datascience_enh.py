@@ -43,13 +43,38 @@ def test_datascience_profile_is_analysis_first():
         assert banned not in names, f"datascience profile should not include {banned}"
 
 
+class _C:
+    supports_native_tools = True
+    def complete(self, *a, **k): ...
+
+
 def test_data_analyst_default_and_sandboxed_build():
-    class _C:
-        supports_native_tools = True
-        def complete(self, *a, **k): ...
     a = data_analyst(_C(), model="m")
     names = {t.name for t in a.tools}
     assert {"python_exec", "describe_data", "verify_math", "final_answer"} <= names
     if sys.platform != "win32":                      # sandbox is Unix-only; just confirm it wires
         s = data_analyst(_C(), model="m", sandboxed=True)
         assert any(t.name == "python_exec" for t in s.tools)
+
+
+def test_stats_critic_panel_lenses_and_review_option():
+    # P1.2 — adversarial statistical review
+    from genai_studio.agents.datascience import stats_panel_tool
+    from genai_studio.agents.panel import STATS_LENSES
+    assert stats_panel_tool(_C(), model="m").name == "review_analysis"
+    for lens in ("assumptions", "power", "multiplicity", "leakage", "confounding"):
+        assert lens in STATS_LENSES
+    assert "review_analysis" in {t.name for t in data_analyst(_C(), model="m", review=True).tools}
+
+
+def test_data_analyst_remember_and_sql_options(tmp_path):
+    # P1.3 memory + P2.3 sql_query
+    a = data_analyst(_C(), model="m", remember=True, cwd=".", memory_dir=str(tmp_path), database=":memory:")
+    assert {"write_memory", "recall_memory", "sql_query"} <= {t.name for t in a.tools}
+
+
+def test_data_science_team_decomposes_to_specialists():
+    # P2.1 — a supervisor delegating to explorer/modeler/statistician
+    from genai_studio.agents.datascience import data_science_team
+    team = data_science_team(_C(), model="m")
+    assert {"explorer", "modeler", "statistician", "final_answer"} <= {t.name for t in team.tools}
