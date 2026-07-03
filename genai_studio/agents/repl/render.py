@@ -38,13 +38,30 @@ def _is_toolcall_text(text: str) -> bool:
         return False
 
 
-_ANSWER_KEYS = ("answer", "final_answer", "response", "result", "output", "text")
+_ANSWER_KEYS = ("answer", "final_answer", "response", "result", "output", "text", "content", "code", "message")
+
+
+def _dig_answer(obj, depth: int = 0):
+    """Recursively pull the human answer out of a (possibly nested) JSON envelope like
+    ``{"id":…, "response":{"result":"…"}}`` — follow answer-ish keys to the first non-empty string."""
+    if isinstance(obj, str):
+        return obj.strip() or None
+    if depth > 6 or not isinstance(obj, dict):
+        return None
+    for key in _ANSWER_KEYS:                              # priority: descend named answer fields
+        if key in obj:
+            r = _dig_answer(obj[key], depth + 1)
+            if r:
+                return r
+    if len(obj) == 1:                                    # single-key wrapper -> descend it
+        return _dig_answer(next(iter(obj.values())), depth + 1)
+    return None
 
 
 def _unwrap_answer(text: str) -> str:
-    """Some models wrap their whole final answer in a lone JSON envelope, e.g.
-    ``{"answer": "…"}`` (not a tool call) — return the inner prose so the user sees clean text.
-    Conservative: only a small pure-envelope object with a string answer field is unwrapped."""
+    """Some models wrap their whole final answer in a JSON envelope (``{"answer":"…"}`` or nested
+    ``{"id":…,"response":{"result":"…"}}``) instead of plain prose — extract the inner text so the user
+    sees clean output. Only fires when the entire message parses as one JSON object."""
     s = text.strip()
     if not (s.startswith("{") and s.endswith("}")):
         return text
@@ -52,13 +69,7 @@ def _unwrap_answer(text: str) -> str:
         obj = json.loads(s)
     except (TypeError, ValueError):
         return text
-    if not isinstance(obj, dict) or not (1 <= len(obj) <= 2):
-        return text
-    for key in _ANSWER_KEYS:
-        v = obj.get(key)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return text
+    return _dig_answer(obj) or text
 
 
 class StreamRenderer:

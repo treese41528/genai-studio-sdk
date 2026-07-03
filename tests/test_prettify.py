@@ -92,12 +92,14 @@ def test_renderer_unwraps_json_answer_envelope():
     r._flush_text()
     out = buf.getvalue()
     assert "Access is limited to /tmp." in out and '"answer"' not in out
-    # a normal answer passes through untouched
-    buf2 = io.StringIO()
-    r2 = StreamRenderer(color=False, pretty=False, stream=buf2)
-    r2._seg = ["Just plain text."]
-    r2._flush_text()
-    assert buf2.getvalue().strip() == "Just plain text."
+
+
+def test_renderer_unwraps_NESTED_json_envelope():
+    from genai_studio.agents.repl.render import _unwrap_answer
+    # the leaked shape from qwen: {"id":…, "response":{"result":"…"}} must extract the inner text
+    assert _unwrap_answer('{"id":"text-b8dde5","response":{"result":"(x-2)*(x**2+2*x+4)"}}') == "(x-2)*(x**2+2*x+4)"
+    assert _unwrap_answer('{"a":1,"b":2,"c":3}') == '{"a":1,"b":2,"c":3}'   # no answer field -> unchanged
+    assert _unwrap_answer("Just plain text.") == "Just plain text."         # non-JSON untouched
 
 
 def test_pretty_command_toggles(tmp_path):
