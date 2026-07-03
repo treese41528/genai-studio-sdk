@@ -67,9 +67,12 @@ BASE_SYSTEM = (
     "answer is cheap to check (e.g. a root "
     "by substitution), verify it before trusting it. If a tool returns UNKNOWN or says a claim is "
     "OUTSIDE its fragment, do NOT retry the same call — reason that step yourself and move on. When "
-    "you have the answer, call final_answer (or finish). Keep replies brief — BUT for a proof or "
-    "multi-step derivation, end with a CLEAN, reader-friendly write-up: state the claim, the key steps "
-    "in order, and the conclusion, so a person can follow it WITHOUT seeing your tool calls."
+    "you have the answer, call final_answer (or finish). Keep replies brief for simple questions — but "
+    "when you PROVE, verify, solve, or derive something, a bare verdict ('this has been proven') is NOT "
+    "enough: you MUST explain WHY it is true. Give a clear, STEP-BY-STEP write-up a student could "
+    "follow — the key algebraic steps or the decisive identity/lemma, in order, each with a word on why "
+    "it holds, ending in the conclusion — presented as readable math, NOT as a recap of your tool "
+    "calls. (E.g. for a²+b²≥2ab: state it, note a²+b²−2ab = (a−b)², observe a square is ≥ 0, conclude.)"
 )
 
 
