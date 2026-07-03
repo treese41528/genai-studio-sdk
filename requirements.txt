@@ -1,3 +1,42 @@
-openai
+# Full dependency set for genai-studio-sdk (mirrors pyproject.toml's [dev] aggregate — every feature
+# enabled + test tooling). pyproject.toml is the source of truth; this is the "install everything"
+# convenience. Requires Python >= 3.10.
+#
+# For a slimmer install, use the extras instead, e.g.:
+#   pip install -e '.[math,smt]'          # exact math + proving only
+#   pip install -e '.[datascience]'       # the data-science toolkit
+#   pip install -e '.[mcp]'               # the MCP client
+
+# ── core (always required) ───────────────────────────────────────────────────
+openai>=1.0
 httpx
 numpy
+
+# ── structured output + MCP share pydantic v2 ────────────────────────────────
+pydantic>=2
+
+# ── data science ([datascience]) ─────────────────────────────────────────────
+pandas>=2.0
+scikit-learn>=1.3
+scipy>=1.10
+statsmodels>=0.14
+matplotlib>=3.7
+
+# ── grounding ([grounding]) — Data Commons statistical knowledge graph ───────
+datacommons-client>=2.0
+
+# ── knowledge authoring ([knowledge]) — OKF frontmatter parsing ──────────────
+pyyaml
+
+# ── exact-math grounding ([math]) — CAS (sympy; mpmath rides along) ──────────
+sympy>=1.12
+
+# ── sound theorem proving ([smt]) — z3 ───────────────────────────────────────
+z3-solver>=4.12
+
+# ── MCP client ([mcp]) — official SDK (needs Python 3.10+, pydantic>=2) ───────
+mcp>=1.9,<2
+
+# ── testing / dev tooling ([test] / [dev]) ───────────────────────────────────
+pytest>=7
+pytest-cov

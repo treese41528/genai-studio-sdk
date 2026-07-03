@@ -39,6 +39,16 @@ Key Workaround - Embeddings:
     We suppress these with: extra_body={"user": None, "encoding_format": None}
     Without this workaround, embeddings return a 400 error.
 
+Model Support - Embeddings (probed live 2026-06-17; see docs/embedding-models.md):
+    Only 15 of the gateway's 35 models expose a working /api/embeddings endpoint.
+    The rest return an error. Embedding dimension varies by model, so keep one
+    embed model consistent across indexing and query.
+    - Embed-capable (dim): llama3.2 (3072), llama3.1 (4096 / 70b 8192),
+      llama3.3:70b (8192), qwen2.5:72b (8192), phi4 (5120), mistral (4096),
+      codellama (4096), llava (4096), qwq (5120), deepseek-r1 (1536-5120 by size)
+    - NO embedding endpoint: gemma3 (ALL sizes - the default chat model), llama4,
+      qwen3 (all, incl. -coder/-vl), gpt-oss, devstral, medgemma
+
 ================================================================================
 INSTALLATION
 ================================================================================
@@ -95,8 +105,8 @@ QUICK START - LIBRARY USAGE
     # ── RAG (Knowledge Base) ────────────────────────────────────────────
     
     # Upload a file and create a knowledge base
-    file_info = ai.upload_file("lecture_notes.pdf")
-    kb = ai.create_knowledge_base("STAT 350 Notes")
+    file_info = ai.upload_file("report.pdf")
+    kb = ai.create_knowledge_base("Project Docs")
     ai.add_file_to_knowledge_base(kb.id, file_info.id)
     
     # Wait for indexing, then query with RAG context
@@ -182,7 +192,7 @@ from openai import OpenAI
 #
 # ════════════════════════════════════════════════════════════════════════════
 
-__version__ = "1.2.1"
+__version__ = "2.0.0"
 
 # Base URL for Purdue's GenAI Studio instance
 # This runs Open WebUI with LiteLLM backend
@@ -366,7 +376,7 @@ class FileInfo:
         - Delete the file: ai.delete_file(file.id)
         
     filename : str
-        Original filename as uploaded (e.g., "lecture_notes.pdf").
+        Original filename as uploaded (e.g., "report.pdf").
         Preserved from the local file path during upload.
         
     meta : dict
@@ -385,11 +395,11 @@ class FileInfo:
     Example:
     -------
     >>> # Upload and inspect
-    >>> info = ai.upload_file("lecture_notes.pdf")
+    >>> info = ai.upload_file("report.pdf")
     >>> print(f"File ID: {info.id}")
     >>> print(f"Filename: {info.filename}")
     File ID: 029a1ad8-95eb-4964-b9fb-64cf980a6e02
-    Filename: lecture_notes.pdf
+    Filename: report.pdf
     
     >>> # Link to a knowledge base
     >>> ai.add_file_to_knowledge_base(kb.id, info.id)
@@ -413,7 +423,7 @@ class FileInfo:
         Example:
         -------
         >>> print(info)
-        FileInfo(id='029a1ad8-...', filename='lecture_notes.pdf')
+        FileInfo(id='029a1ad8-...', filename='report.pdf')
         """
         return f"FileInfo(id='{self.id}', filename='{self.filename}')"
 
@@ -441,8 +451,8 @@ class KnowledgeBase:
         - Delete: ai.delete_knowledge_base(kb.id)
         
     name : str
-        Human-readable name for the knowledge base (e.g., "STAT 350
-        Course Notes"). Set during creation; useful for display in
+        Human-readable name for the knowledge base (e.g., "Project
+        Docs"). Set during creation; useful for display in
         list_knowledge_bases() output.
         
     description : str
@@ -460,11 +470,11 @@ class KnowledgeBase:
     Example:
     -------
     >>> # Create and use
-    >>> kb = ai.create_knowledge_base("STAT 350 Materials", "All course PDFs")
+    >>> kb = ai.create_knowledge_base("Project Docs", "All reference PDFs")
     >>> print(f"Collection ID: {kb.id}")
     >>> print(f"Name: {kb.name}")
     Collection ID: 207ff2b1-330c-493b-9b05-01f18aa975a3
-    Name: STAT 350 Materials
+    Name: Project Docs
     
     >>> # Link files and query
     >>> ai.add_file_to_knowledge_base(kb.id, file_info.id)
@@ -490,7 +500,7 @@ class KnowledgeBase:
         Example:
         -------
         >>> print(kb)
-        KnowledgeBase(id='207ff2b1-...', name='STAT 350 Materials')
+        KnowledgeBase(id='207ff2b1-...', name='Project Docs')
         """
         return f"KnowledgeBase(id='{self.id}', name='{self.name}')"
 
@@ -1494,7 +1504,8 @@ class GenAIStudio:
         try:
             resp = self._http_get("/api/v1/files/")
             data = resp.json()
-            items = data if isinstance(data, list) else data.get("data", data.get("files", []))
+            items = data if isinstance(data, list) else data.get(
+                "items", data.get("data", data.get("files", [])))
             return [FileInfo(id=i["id"], filename=i.get("filename", i.get("name", "unknown")),
                             meta=i.get("meta", {}), raw_response=i) for i in items]
         except httpx.HTTPStatusError as e:
@@ -1528,7 +1539,8 @@ class GenAIStudio:
         try:
             resp = self._http_get("/api/v1/knowledge/")
             data = resp.json()
-            items = data if isinstance(data, list) else data.get("data", data.get("knowledge", []))
+            items = data if isinstance(data, list) else data.get(
+                "items", data.get("data", data.get("knowledge", [])))
             return [KnowledgeBase(id=i["id"], name=i.get("name", "untitled"),
                                   description=i.get("description", ""), raw_response=i) for i in items]
         except httpx.HTTPStatusError as e:
@@ -1973,7 +1985,7 @@ class GenAIStudio:
         >>> # With system prompt
         >>> response = ai.chat(
         ...     "Explain regression",
-        ...     system="You are a statistics professor. Use examples."
+        ...     system="You are a statistics expert. Use examples."
         ... )
         
         >>> # With parameters
@@ -2018,6 +2030,52 @@ class GenAIStudio:
             f"attempts (model: {model}). The backend occasionally drops a "
             "response under load; please retry."
         )
+
+    def chat_raw(
+        self,
+        messages: list[dict] | list[ChatMessage],
+        model: str | None = None,
+        **kwargs,
+    ):
+        """Return the RAW OpenAI chat-completion object (not a ChatResponse).
+
+        This is the supported low-level seam for advanced callers — notably the
+        agent framework in ``genai_studio.agents`` — that need fields
+        ``ChatResponse`` intentionally drops, above all
+        ``resp.choices[0].message.tool_calls`` (native tool-calling) and the
+        full ``raw`` payload. It accepts the same ``tools=`` / ``tool_choice=``
+        / sampling ``**kwargs`` as the OpenAI ``chat.completions.create`` call,
+        passes them straight through to the OpenAI-compatible endpoint, and
+        inherits the empty-completion retry from :meth:`_chat_create`.
+
+        Parameters
+        ----------
+        messages : list[dict] | list[ChatMessage]
+            Full conversation in OpenAI format (dicts) or ``ChatMessage`` objects.
+        model : str, optional
+            Model ID; falls back to the selected model.
+        **kwargs
+            Forwarded verbatim to the OpenAI client (e.g. ``tools``,
+            ``tool_choice``, ``temperature``, ``stream``).
+
+        Returns
+        -------
+        openai.types.chat.ChatCompletion
+            The untouched response object from the OpenAI client.
+
+        Example
+        -------
+        >>> resp = ai.chat_raw(
+        ...     [{"role": "user", "content": "Weather in Paris? Use the tool."}],
+        ...     tools=[weather_tool], tool_choice="auto",
+        ... )
+        >>> resp.choices[0].message.tool_calls
+        """
+        model = self._resolve_model(model)
+        msg_list = [
+            m.to_dict() if isinstance(m, ChatMessage) else m for m in messages
+        ]
+        return self._chat_create(model, msg_list, **kwargs)
 
     def chat_complete(
         self,
@@ -2999,6 +3057,40 @@ Examples:
         "--collections", "-k", nargs="*", metavar="KB_ID",
         help="Knowledge base IDs for RAG-grounded chat"
     )
+    # ── agent command (interactive tool-using REPL) ─────────────────────
+    agent_parser = subparsers.add_parser(
+        "agent",
+        help="Interactive tool-using agent REPL (files, shell, web, data)"
+    )
+    agent_parser.add_argument("--model", "-m", type=str, default=None, metavar="MODEL",
+                              help="Model ID (defaults to the --preset's benchmark-chosen model)")
+    agent_parser.add_argument("--preset", choices=["fast", "balanced", "careful"], default=None,
+                              help="Benchmark-informed model+sampling preset (speed↔quality, like an "
+                                   "effort choice): fast=llama4:latest (quick/cheap), "
+                                   "balanced=qwen2.5:72b (default), careful=deepseek-r1:32b @greedy "
+                                   "(best calibration, lowest hallucination)")
+    agent_parser.add_argument("prompt", type=str, nargs="?",
+                              help="One-shot task (omit for an interactive session)")
+    agent_parser.add_argument("--system", "-s", type=str, metavar="PROMPT",
+                              help="Extra system prompt prepended to the agent's instructions")
+    agent_parser.add_argument("--profile", choices=["research", "coding", "general"],
+                              default="general", help="Tool profile (default: general)")
+    agent_parser.add_argument("--approval", choices=["suggest", "auto", "full"],
+                              default="suggest", help="Approval mode (default: suggest)")
+    agent_parser.add_argument("--sandbox", choices=["read-only", "workspace-write", "danger-full"],
+                              default="workspace-write", help="Sandbox policy (default: workspace-write)")
+    agent_parser.add_argument("--max-steps", type=int, default=25, metavar="N",
+                              help="Max tool/model steps per turn (default: 25)")
+    agent_parser.add_argument("--no-stream", action="store_true", help="Disable token streaming")
+    agent_parser.add_argument("--resume", nargs="?", const="__pick__", metavar="ID",
+                              help="Resume a prior session (omit ID to pick from a list)")
+    agent_parser.add_argument("--mcp", metavar="CONFIG", default=None,
+                              help="Connect MCP servers from a config JSON path (or auto-load "
+                                   "./.genai_studio/mcp.json). Their tools are gated: namespaced "
+                                   "mcp__server__tool, always approval-prompted, allowlisted by an MCPGuard.")
+    agent_parser.add_argument("--allow-stdio", action="store_true",
+                              help="Permit spawning stdio MCP servers (arbitrary local subprocesses); "
+                                   "required to actually launch a --mcp stdio server.")
     # ── embed command ───────────────────────────────────────────────────
     embed_parser = subparsers.add_parser(
         "embed",
@@ -3120,6 +3212,9 @@ Examples:
             return cmd_models(ai, args)
         elif args.command == "chat":
             return cmd_chat(ai, args)
+        elif args.command == "agent":
+            from genai_studio.agents.repl import run_repl
+            return run_repl(ai, args)
         elif args.command == "embed":
             return cmd_embed(ai, args)
         elif args.command == "rag":

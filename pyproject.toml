@@ -7,7 +7,7 @@ name = "genai-studio-sdk"
 dynamic = ["version"]
 description = "A Python wrapper for Purdue's GenAI Studio API — chat, streaming, multi-turn conversations, embeddings, RAG, and a CLI."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Timothy Reese" }]
@@ -28,6 +28,35 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[project.optional-dependencies]
+# Structured output (Agent.output_schema) — pydantic only, no scientific stack. v2 (the MCP SDK
+# also requires pydantic>=2, so [mcp] + [structured] share the same major).
+structured = ["pydantic>=2"]
+# Data-science agents + tools: the heavy scientific stack lives ONLY here.
+# numpy is already a core dependency, so it is not repeated.
+datascience = [
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+    "scipy>=1.10",
+    "statsmodels>=0.14",
+    "matplotlib>=3.7",
+]
+# Grounding: Data Commons statistical knowledge graph for the verifier sub-agent.
+grounding = ["datacommons-client>=2.0"]
+# Knowledge authoring: nicer OKF frontmatter parsing (a stdlib fallback works without it).
+knowledge = ["pyyaml"]
+# Exact-math grounding (verify_math / symbolic_math / matrix_op). Pure-Python CAS; mpmath rides
+# along transitively. sympy is also pulled by [datascience] via scipy/statsmodels.
+math = ["sympy>=1.12"]
+# Sound theorem proving over arithmetic (prove / solve_constraints, and z3-backed verify_math).
+# ~30-50 MB MIT wheel; off by default.
+smt = ["z3-solver>=4.12"]
+# MCP client — connect to external MCP servers behind a Guard. Official SDK; needs Python 3.10+
+# and pydantic>=2 (shared with [structured]). Off by default; lazy-imported.
+mcp = ["mcp>=1.9,<2"]
+test = ["pytest>=7", "pydantic>=2", "pyyaml", "sympy>=1.12", "z3-solver>=4.12", "mcp>=1.9,<2"]
+dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,math,smt,mcp,test]", "pytest-cov"]
+
 [project.urls]
 Homepage = "https://github.com/treese41528/genai-studio-sdk"
 Repository = "https://github.com/treese41528/genai-studio-sdk"
@@ -35,10 +64,17 @@ Repository = "https://github.com/treese41528/genai-studio-sdk"
 [project.scripts]
 genai-studio = "genai_studio:main"
 
-# Single-module distribution: the package is the one file genai_studio.py
-[tool.setuptools]
-py-modules = ["genai_studio"]
+# Package distribution: genai_studio/ (client in __init__.py) + the genai_studio.agents subpackage.
+# `find` auto-discovers future subpackages (e.g. genai_studio.agents.datascience) so none are forgotten.
+[tool.setuptools.packages.find]
+include = ["genai_studio*"]
 
 # Single-source the version from genai_studio.__version__ (read via ast, no import)
 [tool.setuptools.dynamic]
 version = { attr = "genai_studio.__version__" }
+
+# Confine pytest to the unit tests; the live integration file self-gates on the
+# API key, and the legacy test_full_suite.py stays runnable via `python test_full_suite.py`.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

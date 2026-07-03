@@ -1,0 +1,200 @@
+"""Root-solving benchmark — where CHECK ≪ SOLVE, does PROVE-style verification-filtering win?
+
+Solving a polynomial equation is hard (factor a quartic); CHECKING a proposed root is trivial
+(substitute). This is the regime the literature says CAS verification should pay off — unlike
+MATH-500 answer-matching, where checking ≈ re-solving. Three arms over k sampled solutions:
+
+  bare@1          one greedy solve
+  maj@k           majority-vote the solution SETS (self-consistency)
+  prove_filtered  PROVE (arXiv:2410.12608) done properly: DISCARD every sample whose proposed roots
+                  don't all satisfy the equation (deterministic sympy substitution — independent of
+                  how the model solved), then majority-vote the SURVIVORS. This reshapes the vote
+                  distribution instead of rubber-stamping the plurality.
+
+Problems are generated with known integer roots (seeded), so the gold + the substitution check are
+exact. Grading is set-equality of the roots (order-independent, sympy).
+
+  export GENAI_STUDIO_API_KEY=...; export GENAI_STUDIO_RPM=20
+  python benchmarks/root_solve_eval.py --n 30 --k 8
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import random
+import re
+import sys
+import threading
+
+sys.path.insert(0, os.path.dirname(__file__))
+from math_grade import _last_boxed                              # noqa: E402
+
+import sympy                                                    # noqa: E402
+from genai_studio import GenAIStudio                            # noqa: E402
+from genai_studio.agents import Agent, NullTracer               # noqa: E402
+from genai_studio.agents.client import GenAIStudioClient        # noqa: E402
+from genai_studio.agents.tools import final_answer              # noqa: E402
+
+SYSTEM = ("You solve polynomial equations. Find ALL real solutions. Show brief work, then put your "
+          "final answer as a comma-separated list of every solution in \\boxed{...}, e.g. "
+          "\\boxed{-2, 1, 3}. Include every real root exactly once.")
+_X = sympy.Symbol("x")
+
+
+def _client(model, timeout):
+    return GenAIStudioClient(GenAIStudio(validate_model=False, timeout=timeout), default_model=model)
+
+
+def _guard(fn, wall):
+    box: dict = {}
+    def run():
+        try:
+            box["r"] = fn()
+        except Exception as e:
+            box["r"] = f"[error {type(e).__name__}]"
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(wall)
+    return box.get("r", "")
+
+
+def _gen(n, seed, degrees):
+    rng = random.Random(seed)
+    out = []
+    for i in range(n):
+        deg = degrees[i % len(degrees)]                        # balanced spread across degrees
+        roots = rng.sample(range(-6, 7), deg)                  # distinct integer roots
+        P = sympy.expand(sympy.prod([_X - r for r in roots]))
+        pretty = sympy.sstr(P).replace("**", "^").replace("*", "")
+        out.append({"P": P, "gold": {sympy.Integer(r) for r in roots},
+                    "problem": f"Find ALL real solutions to the equation  {pretty} = 0."})
+    return out
+
+
+def _solve(problem, client, model, temp, wall):
+    def run():
+        a = Agent(client=client, model=model, tools=[final_answer], system=SYSTEM,
+                  tracer=NullTracer(), max_steps=4, temperature=temp)
+        return a.run(problem).text or ""
+    return _guard(run, wall)
+
+
+def _extract(text):
+    b = _last_boxed(text) or ""
+    roots = []
+    for p in re.split(r"[,;]", b):
+        p = p.strip().strip("{}$ ").replace("x=", "").lstrip("=").strip()
+        if not p:
+            continue
+        try:
+            roots.append(sympy.nsimplify(sympy.sympify(p.replace("^", "**"))))
+        except Exception:
+            pass
+    return roots
+
+
+def _canon(r):
+    try:
+        return str(sympy.simplify(r))
+    except Exception:
+        return str(r)
+
+
+def _key(roots):
+    return tuple(sorted(_canon(r) for r in roots))
+
+
+def _valid(P, roots, tol=1e-9):
+    """True iff every proposed root actually satisfies P(x)=0 (the cheap independent check)."""
+    if not roots:
+        return False
+    for r in roots:
+        try:
+            if abs(complex(P.subs(_X, r))) > tol:
+                return False
+        except Exception:
+            return False
+    return True
+
+
+def _complete(P, roots):
+    """Validity PLUS completeness: exactly ``deg P`` distinct valid roots. Sound because a degree-d
+    polynomial has at most d roots, so d distinct valid roots means we've found them all — still just
+    substitute-and-count, no solving."""
+    return _valid(P, roots) and len({_canon(r) for r in roots}) == int(sympy.degree(P))
+
+
+def _correct(roots, gold):
+    return _key(roots) == _key(gold)
+
+
+def _vote(samples):                                            # samples = list of root-lists
+    from collections import Counter
+    c = Counter(_key(s) for s in samples if s)
+    if not c:
+        return []
+    best = c.most_common(1)[0][0]
+    return [sympy.sympify(v) for v in best]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default="qwen2.5:72b")
+    ap.add_argument("--n", type=int, default=30)
+    ap.add_argument("--k", type=int, default=8)
+    ap.add_argument("--temp", type=float, default=0.7)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--degrees", default="2,3,4,5,6", help="polynomial degrees to sweep (cycled)")
+    ap.add_argument("--timeout", type=int, default=45)
+    ap.add_argument("--wall", type=float, default=100.0)
+    args = ap.parse_args()
+
+    client = _client(args.model, args.timeout)
+    degrees = [int(d) for d in args.degrees.split(",")]
+    probs = _gen(args.n, args.seed, degrees)
+    print(f"ROOT-SOLVE (check≪solve) — model={args.model} n={args.n} k={args.k} "
+          f"degrees={degrees}\n", flush=True)
+
+    from collections import defaultdict
+    arms = ("bare", "maj", "filt_v", "filt_c", "passk")
+    cell = defaultdict(lambda: {a: 0 for a in arms} | {"n": 0})
+    for i, pr in enumerate(probs, 1):
+        P, gold = pr["P"], pr["gold"]
+        deg = int(sympy.degree(P))
+        bare = _extract(_solve(pr["problem"], client, args.model, 0.0, args.wall))
+        samples = [_extract(_solve(pr["problem"], client, args.model, args.temp, args.wall))
+                   for _ in range(args.k)]
+        surv_v = [s for s in samples if _valid(P, s)]        # validity filter
+        surv_c = [s for s in samples if _complete(P, s)]     # completeness filter
+        picks = {"bare": bare, "maj": _vote(samples),
+                 "filt_v": _vote(surv_v) if surv_v else _vote(samples),
+                 "filt_c": _vote(surv_c) if surv_c else _vote(samples)}
+        c = cell[deg]
+        c["n"] += 1
+        line = f"[{i:>3}/{args.n}] deg{deg}"
+        for arm in ("bare", "maj", "filt_v", "filt_c"):
+            ok = _correct(picks[arm], gold)
+            c[arm] += ok
+            line += f"  {arm}={'✓' if ok else '·'}"
+        c["passk"] += any(_correct(s, gold) for s in samples)
+        line += f"  (v{len(surv_v)}/c{len(surv_c)} of {len(samples)})  gold={sorted(int(g) for g in gold)}"
+        print(line, flush=True)
+
+    tot = {a: sum(c[a] for c in cell.values()) for a in arms} | {"n": sum(c["n"] for c in cell.values())}
+
+    def _row(name, c):
+        n = c["n"] or 1
+        return (f"  {name:>7} (n={c['n']:>2}): bare {c['bare']/n:4.0%} | maj {c['maj']/n:4.0%} | "
+                f"filt-valid {c['filt_v']/n:4.0%} | filt-COMPLETE {c['filt_c']/n:4.0%} | "
+                f"pass@k {c['passk']/n:4.0%}")
+
+    print("\n=== PER-DEGREE: validity filter vs COMPLETENESS filter vs the pass@k ceiling ===")
+    for d in sorted(cell):
+        print(_row(f"deg {d}", cell[d]))
+    print("  " + "-" * 100)
+    print(_row("ALL", tot))
+
+
+if __name__ == "__main__":
+    main()

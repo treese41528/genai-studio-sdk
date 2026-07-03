@@ -49,8 +49,6 @@ from pathlib import Path
 import unicodedata
 
 
-# Then in RAG assertions:
-assert SECRET in normalize(resp), f"Secret not found: {resp[:150]}"
 # ── Ensure genai_studio is importable ────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
