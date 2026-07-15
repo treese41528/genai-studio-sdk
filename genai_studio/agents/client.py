@@ -19,6 +19,7 @@ in by the production layer (M3).
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import os
@@ -212,22 +213,27 @@ def _loads_args(s: str | None) -> dict:
         return {}
 
 
-def _tool_calls_from_text(content: str | None) -> list["ToolCall"]:
-    """Recover a tool call that a model emitted as JSON in the message CONTENT
-    instead of the native ``tool_calls`` field.
+# Machine wrappers models put around text-emitted tool calls. Hermes/Qwen-style
+# tag blocks, llama-3-style <function=name>{args}</function>, the llama
+# <|python_tag|> prefix, and whole-message ```json fences.
+_CALL_TAG_RE = re.compile(
+    r"<\s*(?:tool_call|function_call|toolcall)\s*>\s*(.*?)\s*"
+    r"(?:<\s*/\s*(?:tool_call|function_call|toolcall)\s*>|\Z)", re.S | re.I)
+_FN_TAG_RE = re.compile(
+    r"<\s*function\s*=\s*([\w.\-]+)\s*>\s*(.*?)\s*(?:<\s*/\s*function\s*>|\Z)", re.S | re.I)
+_FENCE_WRAP_RE = re.compile(r"\A```[\w+-]*[ \t]*\n(.*?)\n?\s*```\s*\Z", re.S)
+_TRAIL_FENCE_RE = re.compile(r"\n```[\w+-]*[ \t]*\n(.*?)\n?\s*```\s*\Z", re.S)
+_ARG_KEYS = ("arguments", "parameters", "args", "tool_input")
+# How much prose may precede a trailing call payload before we refuse to treat it
+# as a call (a long answer that merely ENDS with example JSON stays an answer).
+_MAX_PREAMBLE = 300
 
-    Some OpenAI-compatible gateways / models (observed on the Purdue gateway with
-    qwen) put the call in ``content`` as ``{"function": {"name", "arguments"}}``
-    (or ``{"name","arguments"}`` / ``{"tool_calls":[...]}`` / the underscore-less
-    ``{"toolcalls":[...]}``). Without this, the loop would mistake the JSON for a
-    final answer. Conservative: only fires when the content is essentially just
-    that JSON object/array.
-    """
-    if not content:
-        return []
-    s = content.strip()
-    if not (s.startswith("{") or s.startswith("[")):
-        return []
+
+def _calls_from_json_payload(s: str, *, require_args: bool = False) -> list["ToolCall"]:
+    """Parse one JSON payload (object or array) into tool calls; ``[]`` if it
+    isn't call-shaped. With ``require_args`` an item must carry an explicit
+    arguments-ish key — used for payloads found AFTER prose, where a bare
+    ``{"name": ...}`` is far more likely data than a call."""
     obj = None
     try:
         obj = json.loads(s)
@@ -262,14 +268,130 @@ def _tool_calls_from_text(content: str | None) -> list["ToolCall"]:
         else:
             fn = c                                    # {"name", "arguments"} flat
         name = fn.get("name")
-        if not name or not isinstance(name, str):
+        if not isinstance(name, str) or not name:
+            # {"tool": "<name>", "tool_input": {...}} — accepted only WITH an args
+            # key, so data that merely has a "tool" field can't become a call.
+            t = fn.get("tool", fn.get("tool_name"))
+            if isinstance(t, str) and t and any(k in fn for k in _ARG_KEYS):
+                name = t
+            else:
+                continue
+        if require_args and not any(k in fn for k in _ARG_KEYS):
             continue
-        args = fn.get("arguments", fn.get("parameters", fn.get("args", {})))
+        args = fn.get("arguments", fn.get("parameters", fn.get("args", fn.get("tool_input", {}))))
         if isinstance(args, str):
             args = _loads_args(args)
         calls.append(ToolCall(id=c.get("id") or f"text-{uuid.uuid4().hex[:6]}",
                               name=name, arguments=args if isinstance(args, dict) else {}))
     return calls
+
+
+def _calls_from_pythonic(s: str) -> list["ToolCall"]:
+    """Parse llama-style pythonic call listings — ``[read_file(path="x")]`` or a
+    bare ``read_file(path="x")`` — into tool calls. The WHOLE string must be the
+    listing, every element a call with keyword-only literal arguments; anything
+    else returns ``[]`` (prose and ordinary code never qualify)."""
+    s = s.strip()
+    if not re.match(r"\[?\s*[A-Za-z_][\w.]*\s*\(", s):
+        return []
+    try:
+        tree = ast.parse(s, mode="eval").body
+    except (SyntaxError, ValueError):
+        return []
+    nodes = tree.elts if isinstance(tree, (ast.List, ast.Tuple)) else [tree]
+    calls: list[ToolCall] = []
+    for n in nodes:
+        if not isinstance(n, ast.Call) or n.args:      # positional args -> not a tool call
+            return []
+        func, parts = n.func, []
+        while isinstance(func, ast.Attribute):
+            parts.append(func.attr)
+            func = func.value
+        if not isinstance(func, ast.Name):
+            return []
+        name = ".".join([func.id, *reversed(parts)])
+        args = {}
+        for kw in n.keywords:
+            if kw.arg is None:                         # **kwargs -> bail
+                return []
+            try:
+                args[kw.arg] = ast.literal_eval(kw.value)
+            except (ValueError, SyntaxError):
+                return []
+        calls.append(ToolCall(id=f"text-{uuid.uuid4().hex[:6]}", name=name, arguments=args))
+    return calls
+
+
+def _tool_calls_from_text(content: str | None) -> list["ToolCall"]:
+    """Recover a tool call that a model emitted in the message CONTENT instead of
+    the native ``tool_calls`` field.
+
+    Some OpenAI-compatible gateways / models (observed on the Purdue gateway with
+    qwen and llama) emit the call as text. Recognized shapes, most-specific first:
+
+    - ``<tool_call>{...}</tool_call>`` tag blocks (Hermes/Qwen; multiple allowed)
+      and llama's ``<function=name>{args}</function>`` / ``<|python_tag|>`` prefix;
+    - the whole message as (optionally ```json-fenced) call JSON —
+      ``{"function": {...}}`` / ``{"name", "arguments"}`` / ``{"tool_calls": [...]}``
+      / ``{"tool": ..., "tool_input": ...}`` — or a pythonic ``[f(a=1)]`` listing;
+    - a SHORT prose preamble ("Let's read the file.") followed by nothing but the
+      call payload (bare or fenced JSON with an explicit arguments key).
+
+    Without this, the loop would mistake the text for a final answer. Deliberately
+    conservative everywhere: a long answer that merely contains or ends with
+    JSON-looking data is left alone.
+    """
+    if not content:
+        return []
+    s = content.strip()
+
+    # 1) Unambiguous tag wrappers — safe to honor anywhere in the text.
+    tag_bodies = _CALL_TAG_RE.findall(s)
+    if tag_bodies:
+        calls = [c for body in tag_bodies for c in
+                 (_calls_from_json_payload(body) or _calls_from_pythonic(body))]
+        if calls:
+            return calls
+    m = _FN_TAG_RE.search(s)
+    if m:
+        raw = m.group(2).strip()
+        try:
+            parsed = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return [ToolCall(id=f"text-{uuid.uuid4().hex[:6]}",
+                             name=m.group(1), arguments=parsed)]
+    if s.startswith("<|python_tag|>"):
+        s = s[len("<|python_tag|>"):].strip()
+
+    # 2) The whole message is the payload (optionally fenced).
+    m = _FENCE_WRAP_RE.match(s)
+    if m:
+        s = m.group(1).strip()
+    if s.startswith("{") or s.startswith("["):
+        calls = _calls_from_json_payload(s)
+        if calls:
+            return calls
+    calls = _calls_from_pythonic(s)
+    if calls:
+        return calls
+
+    # 3) Short prose preamble + trailing call payload, nothing after it.
+    m = _TRAIL_FENCE_RE.search(s)
+    if m and m.start() <= _MAX_PREAMBLE:
+        return _calls_from_json_payload(m.group(1).strip(), require_args=True)
+    stripped = s.rstrip()
+    if stripped.endswith("}"):
+        idx = stripped.find("{")
+        while 0 <= idx:
+            span = _balanced_object(stripped, idx)
+            if span is not None and idx + len(span) == len(stripped):
+                if 0 < idx <= _MAX_PREAMBLE:            # idx == 0 was case (2)
+                    return _calls_from_json_payload(span, require_args=True)
+                break
+            idx = stripped.find("{", idx + 1)
+    return []
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -111,3 +111,45 @@ def test_pretty_command_toggles(tmp_path):
     _pretty(ctx, "on")
     assert ctx.pretty is True
     assert build_registry().get("pretty") is not None
+
+
+# ── code spans survive prettifying byte-verbatim (terminal copy-paste fidelity) ─
+
+CODE_MSG = ('Here is the function:\n'
+            '```python\n'
+            'def f(x_1, **kwargs):\n'
+            '    d = {"a": 1}\n'
+            '    s = "line\\n"\n'
+            '    return x_1 ** 2\n'
+            '```\n'
+            'Use `d = {"a": 1}` inline. Math outside code: $\\frac{a}{b}$ and x_1.')
+
+
+def test_fenced_code_is_byte_verbatim():
+    out = prettify(CODE_MSG, color=False)
+    assert 'def f(x_1, **kwargs):' in out           # no x₁ subscripting
+    assert 'd = {"a": 1}' in out                    # braces survive
+    assert '"line\\n"' in out                       # backslash escapes survive
+    assert '```python' in out                       # fence markers kept (copyable markdown)
+
+
+def test_inline_code_verbatim_but_prose_still_pretty():
+    out = prettify(CODE_MSG, color=False)
+    assert 'Use d = {"a": 1} inline.' in out        # inline code content untouched
+    assert 'a/b' in out and 'x₁' in out             # LaTeX + subscripts outside code still render
+
+
+def test_fenced_code_verbatim_with_color():
+    out = prettify('```py\nd = {"k": "v\\n"}\n```', color=True)
+    assert 'd = {"k": "v\\n"}' in out               # body line has no ANSI inserted
+    assert out.count('\x1b[2m') == 2                # both fence lines dimmed, nothing else
+
+
+def test_unterminated_fence_fails_safe():
+    out = prettify('Start\n```py\nx = {1: 2}\nno closing fence', color=False)
+    assert 'x = {1: 2}' in out
+
+
+def test_bold_and_bullets_still_render_outside_code():
+    out = prettify('**Bold** point:\n- item `a_{1}`', color=False)
+    assert 'Bold point' in out and '• item a_{1}' in out  # inline code kept literal

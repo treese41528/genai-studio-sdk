@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import select
 import sys
 from pathlib import Path
 
@@ -39,7 +40,9 @@ def _slash_completer(registry):
 
 def _install_slash_completion(registry):
     """Bind Tab to CYCLE through slash-command completions (like the ``/`` menu in Claude Code):
-    Tab next, Shift-Tab previous, and list the options when ambiguous. Fails open if unavailable."""
+    Tab next, Shift-Tab previous, and list the options when ambiguous. Also turns on bracketed
+    paste (readline >= 8.1) so a multi-line paste lands in the buffer as ONE submission instead
+    of firing a turn per line. Fails open if unavailable."""
     try:
         import readline
     except ImportError:
@@ -49,17 +52,63 @@ def _install_slash_completion(registry):
     for binding in ("tab: menu-complete",             # cycle forward through matches
                     '"\\e[Z": menu-complete-backward',  # Shift-Tab: cycle backward
                     "set show-all-if-ambiguous on",   # first Tab also lists the options
-                    "set menu-complete-display-prefix on"):
+                    "set menu-complete-display-prefix on",
+                    "set enable-bracketed-paste on"):  # multi-line paste = one input
         try:
             readline.parse_and_bind(binding)
         except Exception:
             pass
 
+
+def _stdin_pending(timeout: float = 0.0) -> bool:
+    """True if stdin already has a complete line buffered (the tail of a multi-line
+    paste). ``select`` fails on non-selectable stdin (plain Windows, closed pipe) —
+    then this fails open to False and input stays strictly line-by-line."""
+    try:
+        return bool(select.select([sys.stdin], [], [], timeout)[0])
+    except (OSError, ValueError):
+        return False
+
+
+def _read_input(prompt: str = "\n› ", *, _input=input, _pending=_stdin_pending) -> str:
+    """Read one user submission the way Claude Code does:
+
+    - a multi-line PASTE arrives as ONE submission (bracketed paste when readline
+      supports it; otherwise the burst of already-buffered lines is coalesced here);
+    - a trailing ``\\`` on typed input continues on the next line ("… " prompt);
+    - anything multi-line is acknowledged with a dim note so it's clear the block
+      went in as a single message.
+
+    EOFError from the FIRST read propagates (Ctrl-D exits); on a continuation
+    line it just ends the submission.
+    """
+    parts = [_input(prompt)]
+    while _pending(0.06):                    # the rest of a paste is already buffered
+        try:
+            parts.append(_input(""))
+        except EOFError:
+            break
+    if len(parts) == 1 and "\n" not in parts[0]:      # typed input: backslash continuation
+        while parts[-1].rstrip().endswith("\\"):
+            parts[-1] = parts[-1].rstrip()[:-1].rstrip()
+            try:
+                parts.append(_input("… "))
+            except EOFError:
+                break
+    text = "\n".join(parts)
+    n = text.count("\n") + 1
+    if n > 1 and sys.stdout.isatty():
+        sys.stdout.write(f"\033[2m  ({n} lines — sent as one message)\033[0m\n")
+        sys.stdout.flush()
+    return text
+
 BASE_SYSTEM = (
     "You are an interactive coding and research assistant running in a terminal. Use the "
     "available tools to read files, search the codebase (grep/glob), run shell commands, search "
     "the web, and compute. Work step by step and prefer reading before writing; on a multi-step "
-    "task, lay out a plan with update_plan and keep it current. For any non-trivial arithmetic, "
+    "task, lay out a plan with update_plan and keep it current. NEVER announce an action "
+    "('Let me read the file…') without emitting the tool call in the SAME response — an "
+    "announcement without a call stalls the session. For any non-trivial arithmetic, "
     "algebra, calculus, or matrix work, COMPUTE with symbolic_math/matrix_op and CHECK results with "
     "verify_math — never do math in your head; to PROVE a claim holds for all values use prove (a "
     "sound solver) or lean_check (a proof kernel). For a Lean 4 / mathlib proof, FIRST load the "
@@ -224,7 +273,8 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
     guards = [mcp_mgr.guard, approval_guard] if mcp_mgr else [approval_guard]   # MCP allowlist first
     agent = Agent(client=client, tools=tools, system=system, tracer=NullTracer(),
                   guards=guards, model=model, max_steps=cfg.max_steps,
-                  tool_search=tool_search, temperature=temperature, sampling=sampling)
+                  tool_search=tool_search, temperature=temperature, sampling=sampling,
+                  intent_nudges=2)   # small models narrate "Let's read the file" and stop — nudge them to act
     if mcp_mgr is not None:
         agent._closeables.append(mcp_mgr)                # agent.close() tears the MCP servers down
 
@@ -250,7 +300,7 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
     try:
         while True:
             try:
-                line = input("\n› ").strip()
+                line = _read_input("\n› ").strip()
             except EOFError:
                 print()
                 break
@@ -261,7 +311,7 @@ def run_repl(ai, args, *, tools=None, approval_guard=None, approval_config=None)
                 continue
             if line in ("exit", "quit", "q", ":q"):
                 break
-            if line.startswith("/"):
+            if line.startswith("/") and "\n" not in line:   # a pasted block is a prompt, not a command
                 res = registry.dispatch(line, ctx)
                 if res.is_exit:
                     break

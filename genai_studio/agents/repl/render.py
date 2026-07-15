@@ -38,6 +38,17 @@ def _is_toolcall_text(text: str) -> bool:
         return False
 
 
+def _prose_preamble(text: str) -> str:
+    """The human prose before a machine tool-call payload ("Let's read the file.
+    {json}") — shown so a say-then-do preamble isn't swallowed with the payload."""
+    cut = len(text)
+    for marker in ("{", "```", "<tool_call", "<function", "<|python_tag|>", "["):
+        i = text.find(marker)
+        if i != -1:
+            cut = min(cut, i)
+    return text[:cut].strip()
+
+
 _ANSWER_KEYS = ("answer", "final_answer", "response", "result", "output", "text", "content", "code", "message")
 
 
@@ -103,10 +114,17 @@ class StreamRenderer:
             self._spinner = None
 
     def _flush_text(self) -> None:
-        """Print the buffered assistant text, unless it's actually a tool-call JSON."""
+        """Print the buffered assistant text, unless it's actually a tool-call JSON
+        (then only its prose preamble, if any, is shown)."""
         text = "".join(self._seg).strip()
         self._seg = []
-        if not text or _is_toolcall_text(text):
+        if not text:
+            return
+        if _is_toolcall_text(text):
+            pre = _prose_preamble(text)
+            if pre:
+                self.out.write(self._pretty(pre) + "\n")
+                self.out.flush()
             return
         self.out.write(self._pretty(_unwrap_answer(text)) + "\n")
         self.out.flush()
@@ -137,6 +155,8 @@ class StreamRenderer:
             self.out.flush()
             self._spin("thinking…")
         elif isinstance(ev, StepFinished):
+            if self._seg:                      # a text-only step continued (e.g. after an
+                self._seg.append("\n\n")       # intent nudge) — keep the segments apart
             self._spin("thinking…")
         elif isinstance(ev, Final):
             self._stop_spin()
