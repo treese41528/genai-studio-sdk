@@ -253,11 +253,48 @@ def markdown_to_ansi(s: str, color: bool = True) -> str:
         return s
 
 
+# Code must survive prettifying BYTE-VERBATIM — the LaTeX pass strips braces and
+# backslashes and subscripts x_1, which corrupts anything the user copies out of
+# the terminal. Fenced blocks and inline `spans` are stashed before the transforms
+# and restored untouched after (fence marker lines merely dimmed).
+_FENCED_RE = re.compile(r"(?ms)^```[^\n]*\n.*?(?:^```[ \t]*$|\Z)|^```[^\n]*\Z")
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+
+
+def _restore_code(block: str, color: bool) -> str:
+    """Reinsert a stashed code span verbatim. Fenced: ``` marker lines dimmed,
+    body untouched. Inline: backticks dropped, content dimmed (as markdown_to_ansi
+    would have) but NOT transformed."""
+    if block.startswith("```"):
+        if not color:
+            return block
+        lines = block.split("\n")
+        lines[0] = f"{_DIM}{lines[0]}{_RESET}"
+        if len(lines) > 1 and lines[-1].strip() == "```":
+            lines[-1] = f"{_DIM}{lines[-1]}{_RESET}"
+        return "\n".join(lines)
+    inner = block[1:-1]
+    return f"{_DIM}{inner}{_RESET}" if color else inner
+
+
 def prettify(s: str, *, color: bool = True) -> str:
-    """LaTeX → Unicode, then light markdown → ANSI. Fails open to the original text."""
+    """LaTeX → Unicode, then light markdown → ANSI — with code spans passed
+    through byte-verbatim. Fails open to the original text."""
     if not s:
         return s
     try:
-        return markdown_to_ansi(latex_to_unicode(s), color=color)
+        stash: list[str] = []
+
+        def keep(m):
+            stash.append(m.group(0))
+            return f"\x01{len(stash) - 1}\x01"
+
+        t = _FENCED_RE.sub(keep, s)
+        t = _INLINE_CODE_RE.sub(keep, t)
+        t = markdown_to_ansi(latex_to_unicode(t), color=color)
+        if stash:
+            t = re.sub(r"\x01(\d+)\x01",
+                       lambda m: _restore_code(stash[int(m.group(1))], color), t)
+        return t
     except Exception:
         return s

@@ -54,8 +54,11 @@ smt = ["z3-solver>=4.12"]
 # MCP client — connect to external MCP servers behind a Guard. Official SDK; needs Python 3.10+
 # and pydantic>=2 (shared with [structured]). Off by default; lazy-imported.
 mcp = ["mcp>=1.9,<2"]
-test = ["pytest>=7", "pydantic>=2", "pyyaml", "sympy>=1.12", "z3-solver>=4.12", "mcp>=1.9,<2"]
-dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,math,smt,mcp,test]", "pytest-cov"]
+# PDF text extraction in the read_file tool. Pure-Python; lazy-imported (a clear
+# install hint is returned when a PDF is read without it).
+pdf = ["pypdf>=3.0"]
+test = ["pytest>=7", "pydantic>=2", "pyyaml", "sympy>=1.12", "z3-solver>=4.12", "mcp>=1.9,<2", "pypdf>=3.0"]
+dev = ["genai-studio-sdk[datascience,structured,grounding,knowledge,math,smt,mcp,pdf,test]", "pytest-cov"]
 
 [project.urls]
 Homepage = "https://github.com/treese41528/genai-studio-sdk"

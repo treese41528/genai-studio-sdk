@@ -23,7 +23,7 @@ def make_file_tools(ws: WorkspaceConfig) -> list:
 
     @tool
     def read_file(path: str, max_bytes: int = 100_000) -> ToolResult:
-        """Read a UTF-8 text file from the workspace.
+        """Read a UTF-8 text file — or extract the text of a PDF — from the workspace.
 
         Args:
             path: File path, relative to the workspace root (or absolute inside it).
@@ -35,6 +35,8 @@ def make_file_tools(ws: WorkspaceConfig) -> list:
             return ToolResult(content="", error=str(e))
         if not p.is_file():
             return ToolResult(content="", error=f"not a file: {path}")
+        if _is_pdf(p):
+            return _read_pdf(p, path, max(0, max_bytes))
         try:
             size = p.stat().st_size
             data = p.read_bytes()[: max(0, max_bytes)]
@@ -98,6 +100,62 @@ def make_file_tools(ws: WorkspaceConfig) -> list:
         return ToolResult(content=f"edited {path} (1 replacement)")
 
     return [read_file, write_file, edit_file]
+
+
+def _is_pdf(p: Path) -> bool:
+    """A PDF by extension OR by the ``%PDF`` magic (catch a mis-named .txt too)."""
+    if p.suffix.lower() == ".pdf":
+        return True
+    try:
+        with open(p, "rb") as f:
+            return f.read(5).startswith(b"%PDF-")
+    except OSError:
+        return False
+
+
+def _read_pdf(p: Path, path: str, max_bytes: int) -> ToolResult:
+    """Extract a PDF's text with pypdf (page-delimited), truncated to ``max_bytes``.
+    Fails with an actionable message — an install hint, not a "convert it first"
+    refusal the model would otherwise emit on the raw bytes."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return ToolResult(content="", error=(
+            f"{path} is a PDF; text extraction needs pypdf. Install it with "
+            "`pip install 'genai-studio-sdk[pdf]'` (or `pip install pypdf`), then read it again."))
+    try:
+        reader = PdfReader(str(p))
+    except Exception as e:      # pypdf raises assorted errors on malformed/encrypted files
+        return ToolResult(content="", error=f"cannot parse PDF {path}: {type(e).__name__}: {e}")
+    if getattr(reader, "is_encrypted", False):
+        try:
+            reader.decrypt("")   # many PDFs are encrypted with an empty owner password
+        except Exception:
+            return ToolResult(content="", error=f"{path} is an encrypted PDF (password required)")
+    parts, total, truncated, any_text = [], 0, False, False
+    npages = len(reader.pages)
+    for i, page in enumerate(reader.pages):
+        try:
+            page_text = page.extract_text() or ""
+        except Exception:
+            page_text = ""
+        if page_text.strip():
+            any_text = True
+        chunk = f"\n--- page {i + 1} of {npages} ---\n{page_text}"
+        if total + len(chunk) > max_bytes:
+            parts.append(chunk[: max(0, max_bytes - total)])
+            truncated = True
+            break
+        parts.append(chunk)
+        total += len(chunk)
+    if not any_text:      # only page delimiters came back -> scanned/image PDF
+        return ToolResult(content="", error=(
+            f"{path}: no extractable text ({npages} page(s)) — it is likely scanned images. "
+            "OCR would be required."))
+    text = "".join(parts).strip()
+    if truncated:
+        text += f"\n... (truncated at {max_bytes} chars of {npages}-page PDF)"
+    return ToolResult(content=text, data={"pdf": True, "pages": npages, "path": str(p)})
 
 
 def _atomic_write(p: Path, content: str) -> None:

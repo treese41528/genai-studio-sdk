@@ -2,6 +2,38 @@
 
 All notable changes to `genai-studio-sdk`. This project follows [semantic versioning](https://semver.org).
 
+## [Unreleased]
+
+REPL reliability + terminal ergonomics — "say it AND do it", copy/paste that behaves like Claude Code,
+and reading PDFs directly.
+
+### Added
+- **`read_file` reads PDFs.** The tool now extracts a PDF's text (page-delimited, `%PDF` magic-sniffed
+  so a mis-named `.txt` still works) instead of the model refusing with "convert it to text first."
+  Uses `pypdf` (new **`[pdf]`** extra; lazy-imported — a missing dep returns an install hint, an
+  image-only/scanned PDF returns a clear "no extractable text / OCR required" message). Text files are
+  byte-identical to before.
+
+### Fixed
+- **Narrated-but-never-taken actions:** small gateway models often reply "Let's read the file…"
+  with no tool call, which ended the turn. Two layers now catch this: (1) `_tool_calls_from_text`
+  recovers far more text-emitted call shapes — Hermes/Qwen `<tool_call>` blocks (incl. unclosed +
+  multiple), llama `<function=name>` / `<|python_tag|>` / pythonic `[f(a=1)]` listings, ```json-fenced
+  payloads, and a call-shaped JSON after a short prose preamble (long answers that merely end with
+  JSON stay answers); (2) **`Agent.intent_nudges`** (opt-in, default 0 = byte-identical) — when a
+  no-tool-call response's tail *announces* an action ("Let me check…", never offers/questions), the
+  loop feeds back a "actually CALL the tool" nudge instead of finalizing, bounded per run. The REPL
+  enables 2 nudges and its system prompt now forbids announcing without calling.
+- **Code copied from the terminal was corrupted:** `prettify` ran LaTeX→Unicode over code too,
+  stripping `{}`/`\` and subscripting `x_1`→`x₁`. Fenced blocks and inline `code` now pass through
+  BYTE-VERBATIM (fence marker lines just dimmed); prose around them still renders.
+- **Multi-line paste fired one turn per line:** the REPL enables readline bracketed paste (≥8.1) and
+  falls back to burst-coalescing buffered lines, so a pasted block arrives as ONE message (with a dim
+  "(N lines — sent as one message)" note). Trailing-`\` continuation composes multi-line prompts; a
+  multi-line paste starting with `/` is treated as a prompt, not a slash command. The renderer keeps
+  a say-then-do prose preamble visible when it drops a tool-call-JSON segment, and separates text
+  segments across a nudged step.
+
 ## [2.0.1] — 2026-07-03
 
 Post-2.0 enhancements — the data-science submodule brought fully onto the 2.0 framework, and MCP P2/P3.

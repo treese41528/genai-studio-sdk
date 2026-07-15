@@ -87,3 +87,28 @@ def test_stream_recovers_text_emitted_tool_call():
     # and the renderer must NOT show the raw tool-call JSON
     _, out = _render(evs)
     assert '{"name": "echo"' not in out
+
+
+# ── say-then-do: prose preamble of a text-emitted tool call is shown, JSON dropped ─
+
+def test_preamble_shown_json_payload_dropped():
+    _, out = _render([
+        TextDelta("Let me check the file. ", 0),
+        TextDelta('{"name": "read_file", "arguments": {"path": "x.py"}}', 0),
+        ToolCallStarted("c1", "read_file", {"path": "x.py"}, 0),
+        ToolCallFinished("c1", "read_file", ToolResult(content="data"), 0),
+        Final(_result("done")),
+    ])
+    assert "Let me check the file." in out
+    assert '"arguments"' not in out                 # the machine payload never shows
+
+
+def test_nudged_segments_are_separated():
+    from genai_studio.agents.events import StepFinished
+    _, out = _render([
+        TextDelta("Let's read the file.", 0),
+        StepFinished(0, True, 0, None),             # intent-nudge step boundary
+        TextDelta("The file defines a Flask app.", 1),
+        Final(_result("The file defines a Flask app.")),
+    ])
+    assert "Let's read the file.\n\nThe file defines a Flask app." in out

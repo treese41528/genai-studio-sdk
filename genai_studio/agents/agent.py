@@ -11,7 +11,8 @@ worth reading: this is the teachable core.
     msgs = [system?] + history + [user]
     for step in range(max_steps):
         resp = ask_model(msgs, tools)          # <- _CallModel intent
-        if no tool_calls: return finalize(resp)
+        if no tool_calls: return finalize(resp)   # (or nudge, if intent_nudges
+                                                  #  and the text only ANNOUNCES an action)
         append assistant(tool_calls) to msgs
         for call in resp.tool_calls:
             result = run_tool(call)            # <- _ExecTool intent
@@ -24,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -196,6 +198,11 @@ class Agent:
     name: str | None = None  # default tool name when exposed via as_tool()
     guards: Sequence = ()  # before/after-tool hooks (deterministic policy seam)
     tool_search: Any = None  # opt-in deferred-tool config (ToolSearch); None = all tools eager
+    # Opt-in (0 = off, byte-identical behavior): max times per run a no-tool-call
+    # response whose tail ANNOUNCES an action ("Let's read the file") is answered
+    # with a "actually call the tool" nudge instead of being taken as final —
+    # small models narrate instead of acting, which otherwise ends the turn.
+    intent_nudges: int = 0
     _closeables: list = field(default_factory=list, init=False, repr=False)  # attached resources (e.g. MCP managers)
 
     def __post_init__(self):
@@ -263,6 +270,7 @@ class Agent:
         steps: list[Step] = []
         usage = Usage.zero()
         output_retry_used = False
+        nudges_left = max(0, int(self.intent_nudges or 0))
 
         try:
             for step in range(self.max_steps):
@@ -283,8 +291,20 @@ class Agent:
                 rec = Step(index=step, request_messages=list(msgs),
                            response=resp, usage=resp.usage)
 
-                # (2a) No tool calls -> the model is answering, not acting.
+                # (2a) No tool calls -> the model is answering — or merely
+                # NARRATING an action it never took ("Let's read the file").
+                # With intent_nudges enabled, feed back a do-it-now nudge and
+                # loop instead of finalizing (bounded; never under output_schema,
+                # whose no-tool-call replies are the JSON answer path).
                 if not resp.tool_calls:
+                    if (nudges_left > 0 and specs and self.output_schema is None
+                            and _narrates_action(resp.text)):
+                        nudges_left -= 1
+                        msgs.append(Message.assistant(resp.text or ""))
+                        msgs.append(Message.user(_NUDGE))
+                        steps.append(rec)
+                        yield _StepDone(step=step, usage=resp.usage)
+                        continue
                     msgs.append(Message.assistant(resp.text or ""))
                     # JSON-mode structured output (backends without native tools).
                     if self.output_schema is not None and not native:
@@ -866,6 +886,44 @@ def _accumulate(buf: dict, ch) -> None:
     if ch.name:
         b["name"] = ch.name
     b["args"] += ch.args_fragment or ""
+
+
+_NUDGE = ("You announced an action but did not call any tool. Do not describe what "
+          "you will do — actually CALL the tool now. If no tool is needed, give your "
+          "complete final answer instead.")
+
+# First-person intent ("let me / I'll / I'm going to / next, I ...") followed
+# shortly by an action verb, within one sentence. "let me know" is excluded.
+_NARRATE_RE = re.compile(
+    r"(?:let'?s|let\s+me(?!\s+know\b)|let\s+us|i(?:'|’)ll|i\s+will|"
+    r"i(?:'|’)?a?m\s+(?:going\s+to|about\s+to)|allow\s+me\s+to|"
+    r"we(?:'|’)ll|we\s+will|(?:first|next|now|then),?\s+i\b)"
+    r"[^.!?\n]{0,80}?\b"
+    r"(?:read|open|load|run|execut|search|grep|find|locat|list|check|inspect|"
+    r"look|view|examin|explor|scan|fetch|brows|download|write|edit|creat|modif|"
+    r"updat|appl|call|invok|us[ei]|start\s+by|analyz|analys|verify|comput|"
+    r"calculat|query|test)", re.I)
+# An offer or question deferring to the user is NOT unfulfilled intent.
+_OFFER_RE = re.compile(
+    r"(?:if\s+you|would\s+you|do\s+you\s+want|want\s+me\s+to|should\s+i|"
+    r"shall\s+i|let\s+me\s+know)", re.I)
+
+
+def _narrates_action(text: str | None) -> bool:
+    """True when the TAIL of a no-tool-call response announces an action the
+    model never took — the "Let's read the file." stall. Tail-only, so an answer
+    that announced and then DELIVERED does not match; offers/questions deferring
+    to the user never match."""
+    tail = (text or "").strip()[-300:]
+    if not tail or tail.endswith("?"):
+        return False
+    m = _NARRATE_RE.search(tail)
+    if m is None:
+        return False
+    # Judge only the sentence the intent appears in (and after), so delivered
+    # content BEFORE it can't mask an offer, nor an early offer mask intent.
+    sentence_start = max(tail.rfind(p, 0, m.start()) for p in (". ", "! ", "\n", "? "))
+    return _OFFER_RE.search(tail[sentence_start + 1:]) is None
 
 
 def _finish_answer(arguments: dict) -> str:
