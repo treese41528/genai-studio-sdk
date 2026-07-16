@@ -23,7 +23,8 @@ def make_file_tools(ws: WorkspaceConfig) -> list:
 
     @tool
     def read_file(path: str, max_bytes: int = 100_000) -> ToolResult:
-        """Read a UTF-8 text file — or extract the text of a PDF — from the workspace.
+        """Read a UTF-8 text file, or extract the text of a PDF, Word (.docx/.doc),
+        or Excel (.xlsx/.xls) document, from the workspace.
 
         Args:
             path: File path, relative to the workspace root (or absolute inside it).
@@ -35,8 +36,10 @@ def make_file_tools(ws: WorkspaceConfig) -> list:
             return ToolResult(content="", error=str(e))
         if not p.is_file():
             return ToolResult(content="", error=f"not a file: {path}")
-        if _is_pdf(p):
-            return _read_pdf(p, path, max(0, max_bytes))
+        mb = max(0, max_bytes)
+        kind = _detect_kind(p)
+        if kind is not None:
+            return _EXTRACTORS[kind](p, path, mb)
         try:
             size = p.stat().st_size
             data = p.read_bytes()[: max(0, max_bytes)]
@@ -102,15 +105,96 @@ def make_file_tools(ws: WorkspaceConfig) -> list:
     return [read_file, write_file, edit_file]
 
 
-def _is_pdf(p: Path) -> bool:
-    """A PDF by extension OR by the ``%PDF`` magic (catch a mis-named .txt too)."""
-    if p.suffix.lower() == ".pdf":
-        return True
+# ── binary-document detection + extraction ───────────────────────────────────
+# read_file transparently extracts text from PDF / Word / Excel so the model can
+# "read" them instead of choking on raw bytes. Everything here FAILS OPEN: any
+# detection error falls back to the plain-text path (which then reports a clean
+# "not UTF-8 text" if it really is binary), and each extractor returns an
+# actionable ToolResult.error (install hint / conversion hint) rather than raising.
+
+_EXT_KIND = {".pdf": "pdf", ".docx": "docx", ".docm": "docx",
+             ".xlsx": "xlsx", ".xlsm": "xlsx", ".doc": "doc", ".xls": "xls"}
+_ZIP_MAGIC = b"PK\x03\x04"
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def _detect_kind(p: Path):
+    """Classify a file as 'pdf'/'docx'/'xlsx'/'doc'/'xls', or ``None`` for the
+    plain-text path. Extension first (fast, the common case); then a magic-byte
+    sniff so a mis-named or extensionless document is still handled."""
+    kind = _EXT_KIND.get(p.suffix.lower())
+    if kind is not None:
+        return kind
     try:
         with open(p, "rb") as f:
-            return f.read(5).startswith(b"%PDF-")
+            head = f.read(8)
     except OSError:
-        return False
+        return None
+    if head.startswith(b"%PDF-"):
+        return "pdf"
+    if head.startswith(_ZIP_MAGIC):          # OOXML is a zip — peek at the parts
+        return _zip_kind(p)
+    if head.startswith(_OLE_MAGIC):          # legacy Office is an OLE compound file
+        return _ole_kind(p)
+    return None
+
+
+def _zip_kind(p: Path):
+    try:
+        import zipfile
+        with zipfile.ZipFile(p) as z:
+            names = set(z.namelist())
+        if "word/document.xml" in names:
+            return "docx"
+        if "xl/workbook.xml" in names:
+            return "xlsx"
+    except Exception:
+        pass
+    return None
+
+
+def _ole_kind(p: Path):
+    try:
+        import olefile
+        if not olefile.isOleFile(str(p)):
+            return None
+        ole = olefile.OleFileIO(str(p))
+        try:
+            streams = {"/".join(s).lower() for s in ole.listdir()}
+        finally:
+            ole.close()
+        if any("worddocument" in s for s in streams):
+            return "doc"
+        if any(s in ("workbook", "book") for s in streams):
+            return "xls"
+    except Exception:
+        pass
+    return None
+
+
+def _cap(lines, max_bytes: int, note: str):
+    """Join ``lines`` with newlines, stopping once ``max_bytes`` chars is reached;
+    append ``note`` if truncated. Caps while building so a huge sheet/doc can't blow
+    up memory."""
+    out, total, truncated = [], 0, False
+    for ln in lines:
+        if total + len(ln) + 1 > max_bytes:
+            out.append(ln[: max(0, max_bytes - total)])
+            truncated = True
+            break
+        out.append(ln)
+        total += len(ln) + 1
+    text = "\n".join(out).strip()
+    return (text + note) if truncated else text
+
+
+def _fmt_cell(v) -> str:
+    """Render a spreadsheet cell: whole floats as ints (7.0 -> '7'), None as ''."""
+    if v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
 
 
 def _read_pdf(p: Path, path: str, max_bytes: int) -> ToolResult:
@@ -156,6 +240,164 @@ def _read_pdf(p: Path, path: str, max_bytes: int) -> ToolResult:
     if truncated:
         text += f"\n... (truncated at {max_bytes} chars of {npages}-page PDF)"
     return ToolResult(content=text, data={"pdf": True, "pages": npages, "path": str(p)})
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _read_docx(p: Path, path: str, max_bytes: int) -> ToolResult:
+    """Extract a .docx's text with the stdlib (no dependency): unzip
+    ``word/document.xml`` and walk it, emitting a newline per paragraph, a tab per
+    ``w:tab``, and a break per ``w:br``. Table cells are paragraphs, so they come
+    through in document order."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+    try:
+        with zipfile.ZipFile(p) as z:
+            xml = z.read("word/document.xml")
+        root = ET.fromstring(xml)
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, OSError) as e:
+        return ToolResult(content="", error=f"cannot read .docx {path}: {type(e).__name__}: {e}")
+    out: list = []
+
+    def walk(el):
+        for child in el:
+            tag = child.tag
+            if tag == _W + "t":
+                out.append(child.text or "")
+            elif tag == _W + "tab":
+                out.append("\t")
+            elif tag in (_W + "br", _W + "cr"):
+                out.append("\n")
+            else:
+                walk(child)
+                if tag == _W + "p":
+                    out.append("\n")
+
+    body = root.find(_W + "body")
+    walk(body if body is not None else root)
+    text = "".join(out).strip()
+    if not text:
+        return ToolResult(content="", error=f"{path}: no extractable text in the Word document.")
+    text = _cap(text.split("\n"), max_bytes, f"\n... (truncated at {max_bytes} chars)")
+    return ToolResult(content=text, data={"docx": True, "path": str(p)})
+
+
+def _read_xlsx(p: Path, path: str, max_bytes: int) -> ToolResult:
+    """Extract an .xlsx as tab-separated rows per sheet, using openpyxl."""
+    try:
+        import openpyxl
+    except ImportError:
+        return ToolResult(content="", error=(
+            f"{path} is an .xlsx; reading it needs openpyxl. Install it with "
+            "`pip install 'genai-studio-sdk[xlsx]'` (or `pip install openpyxl`), then read it again."))
+    try:
+        wb = openpyxl.load_workbook(str(p), read_only=True, data_only=True)
+    except Exception as e:
+        return ToolResult(content="", error=f"cannot read .xlsx {path}: {type(e).__name__}: {e}")
+    n_sheets = len(wb.sheetnames)
+
+    def lines():
+        for ws in wb.worksheets:
+            yield f"--- sheet: {ws.title} ---"
+            for row in ws.iter_rows(values_only=True):
+                yield "\t".join(_fmt_cell(c) for c in row)
+
+    try:
+        text = _cap(lines(), max_bytes, f"\n... (truncated at {max_bytes} chars)")
+    finally:
+        wb.close()
+    return ToolResult(content=text, data={"xlsx": True, "sheets": n_sheets, "path": str(p)})
+
+
+def _read_xls(p: Path, path: str, max_bytes: int) -> ToolResult:
+    """Extract a legacy .xls as tab-separated rows per sheet, using xlrd."""
+    try:
+        import xlrd
+    except ImportError:
+        return ToolResult(content="", error=(
+            f"{path} is a legacy .xls; reading it needs xlrd. Install it with "
+            "`pip install 'genai-studio-sdk[xls]'` (or `pip install xlrd`), then read it again."))
+    try:
+        book = xlrd.open_workbook(str(p))
+    except Exception as e:
+        return ToolResult(content="", error=f"cannot read .xls {path}: {type(e).__name__}: {e}")
+
+    def lines():
+        for sh in book.sheets():
+            yield f"--- sheet: {sh.name} ---"
+            for rx in range(sh.nrows):
+                yield "\t".join(_fmt_cell(v) for v in sh.row_values(rx))
+
+    text = _cap(lines(), max_bytes, f"\n... (truncated at {max_bytes} chars)")
+    return ToolResult(content=text, data={"xls": True, "sheets": book.nsheets, "path": str(p)})
+
+
+def _read_doc(p: Path, path: str, max_bytes: int) -> ToolResult:
+    """Extract a legacy Word .doc (OLE compound file) with olefile — parse the FIB,
+    read the CLX piece table from the table stream, and decode each piece (8-bit
+    cp1252 or 16-bit UTF-16LE per its ``fc`` flag). BEST-EFFORT: the .doc binary
+    format is old and varied, so on any parse failure this returns an actionable
+    'convert to .docx' message rather than raising or emitting garbage."""
+    import struct
+    try:
+        import olefile
+    except ImportError:
+        return ToolResult(content="", error=(
+            f"{path} is a legacy .doc; reading it needs olefile. Install it with "
+            "`pip install 'genai-studio-sdk[doc]'` (or `pip install olefile`), then read it again."))
+    convert_hint = (f"{path}: could not extract text from this legacy .doc. Convert it to "
+                    ".docx (or PDF) and read that instead.")
+    if not olefile.isOleFile(str(p)):
+        return ToolResult(content="", error=convert_hint)
+    ole = olefile.OleFileIO(str(p))
+    try:
+        wd = ole.openstream("WordDocument").read()
+        flags = struct.unpack_from("<H", wd, 0x0A)[0]
+        table_name = "1Table" if (flags & 0x0200) else "0Table"
+        if not ole.exists(table_name):
+            table_name = "0Table" if table_name == "1Table" else "1Table"
+        ccp_text = struct.unpack_from("<i", wd, 0x4C)[0]
+        fc_clx = struct.unpack_from("<I", wd, 0x01A2)[0]
+        lcb_clx = struct.unpack_from("<I", wd, 0x01A6)[0]
+        clx = ole.openstream(table_name).read()[fc_clx:fc_clx + lcb_clx]
+        i = 0
+        while i < len(clx) and clx[i] == 0x01:      # skip leading Prc (formatting) blocks
+            i += 3 + struct.unpack_from("<H", clx, i + 1)[0]
+        if i >= len(clx) or clx[i] != 0x02:         # expect the Pcdt marker
+            return ToolResult(content="", error=convert_hint)
+        lcb = struct.unpack_from("<I", clx, i + 1)[0]
+        plc = clx[i + 5:i + 5 + lcb]
+        n = (lcb - 4) // 12                          # (n+1) CPs of 4B + n PCDs of 8B
+        cps = [struct.unpack_from("<I", plc, k * 4)[0] for k in range(n + 1)]
+        chunks = []
+        for k in range(n):
+            fc = struct.unpack_from("<I", plc, 4 * (n + 1) + k * 8 + 2)[0]
+            nchars = cps[k + 1] - cps[k]
+            if fc & 0x40000000:                      # 8-bit cp1252, fc halved
+                base = (fc & 0x3FFFFFFF) // 2
+                chunks.append(wd[base:base + nchars].decode("cp1252", "replace"))
+            else:                                    # 16-bit utf-16le
+                chunks.append(wd[fc:fc + nchars * 2].decode("utf-16-le", "replace"))
+    except Exception:
+        return ToolResult(content="", error=convert_hint)
+    finally:
+        ole.close()
+    raw = "".join(chunks)
+    if ccp_text > 0:
+        raw = raw[:ccp_text]                          # keep just the main document text
+    # Word control marks -> readable text: \r ends a paragraph, \x07 delimits cells.
+    for a, b in (("\r", "\n"), ("\x07", "\t"), ("\x0b", "\n"), ("\x0c", "\n"),
+                 ("\x01", ""), ("\x02", ""), ("\x05", ""), ("\x08", "")):
+        raw = raw.replace(a, b)
+    text = _cap(raw.split("\n"), max_bytes, f"\n... (truncated at {max_bytes} chars)")
+    if not text.strip():
+        return ToolResult(content="", error=convert_hint)
+    return ToolResult(content=text, data={"doc": True, "path": str(p)})
+
+
+_EXTRACTORS = {"pdf": _read_pdf, "docx": _read_docx, "xlsx": _read_xlsx,
+               "xls": _read_xls, "doc": _read_doc}
 
 
 def _atomic_write(p: Path, content: str) -> None:
