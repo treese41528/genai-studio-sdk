@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 
 import pytest
 
@@ -124,6 +125,100 @@ def test_text_files_unchanged_by_pdf_path(ftools):
     r = ftools["read"].run({"path": "notes.md"})
     assert r.error is None and r.content == "# Title\nplain text"
     assert r.data.get("pdf") is None                 # text path untouched, no pdf marker
+
+
+# ── read_file: Word / Excel extraction ────────────────────────────────────────
+def _write_docx(path, paragraphs):
+    """Write a minimal valid .docx (stdlib zip of OOXML) with the given paragraphs."""
+    import zipfile
+    ct = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types '
+          'xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+          '<Default Extension="xml" ContentType="application/xml"/>'
+          '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-'
+          'officedocument.wordprocessingml.document.main+xml"/></Types>')
+    rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships '
+            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+            'relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+    body = "".join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in paragraphs)
+    doc = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document '
+           'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+           f"{body}<w:sectPr/></w:body></w:document>")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", ct)
+        z.writestr("_rels/.rels", rels)
+        z.writestr("word/document.xml", doc)
+
+
+def test_read_file_extracts_docx(ftools, tmp_path):
+    _write_docx(tmp_path / "d.docx", ["First paragraph.", "Second paragraph."])
+    r = ftools["read"].run({"path": "d.docx"})
+    assert r.error is None, r.error
+    assert r.content == "First paragraph.\nSecond paragraph."
+    assert r.data.get("docx") is True
+
+
+def test_read_file_detects_docx_by_magic(ftools, tmp_path):
+    _write_docx(tmp_path / "mystery.bin", ["Magic-sniffed Word text."])
+    r = ftools["read"].run({"path": "mystery.bin"})     # no .docx extension -> zip-peek
+    assert r.error is None and "Magic-sniffed Word text." in r.content
+
+
+def test_read_file_extracts_xlsx(ftools, tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Sales"
+    ws.append(["Region", "Q1"]); ws.append(["West", 100])
+    wb.create_sheet("Notes").append(["memo", "ok"])
+    wb.save(tmp_path / "s.xlsx")
+    r = ftools["read"].run({"path": "s.xlsx"})
+    assert r.error is None, r.error
+    assert "--- sheet: Sales ---" in r.content and "Region\tQ1" in r.content
+    assert "West\t100" in r.content                     # whole float rendered as int
+    assert "--- sheet: Notes ---" in r.content and "memo\tok" in r.content
+    assert r.data.get("xlsx") is True and r.data.get("sheets") == 2
+
+
+def test_read_file_extracts_xls(ftools, tmp_path):
+    xlwt = pytest.importorskip("xlwt")
+    pytest.importorskip("xlrd")
+    b = xlwt.Workbook(); s = b.add_sheet("Sheet1")
+    for rx, row in enumerate([["Name", "Score"], ["Ann", 7]]):
+        for cx, v in enumerate(row):
+            s.write(rx, cx, v)
+    b.save(str(tmp_path / "legacy.xls"))
+    r = ftools["read"].run({"path": "legacy.xls"})
+    assert r.error is None, r.error
+    assert "Name\tScore" in r.content and "Ann\t7" in r.content
+    assert r.data.get("xls") is True
+
+
+def test_read_file_bad_xlsx_errors_cleanly(ftools, tmp_path):
+    pytest.importorskip("openpyxl")
+    (tmp_path / "broken.xlsx").write_bytes(b"PK\x03\x04 not really a workbook")
+    r = ftools["read"].run({"path": "broken.xlsx"})
+    assert r.error and r.content == ""                  # graceful, not a crash
+
+
+def test_read_file_extracts_legacy_doc(ftools, tmp_path):
+    # Legacy .doc is an OLE binary that can't be authored in pure Python, so this
+    # uses a small committed fixture (a real MS Word 97 file, generated once via
+    # LibreOffice) to exercise the FIB/piece-table parser fast and deterministically.
+    pytest.importorskip("olefile")
+    src = os.path.join(os.path.dirname(__file__), "fixtures", "legacy_sample.doc")
+    shutil.copy(src, tmp_path / "legacy.doc")
+    r = ftools["read"].run({"path": "legacy.doc"})
+    assert r.error is None, r.error
+    assert "Hello from a Word document." in r.content
+    assert "Second paragraph with two runs." in r.content
+    assert r.data.get("doc") is True
+
+
+def test_read_file_bad_doc_gives_conversion_hint(ftools, tmp_path):
+    pytest.importorskip("olefile")
+    (tmp_path / "fake.doc").write_bytes(b"not an OLE compound file at all")
+    r = ftools["read"].run({"path": "fake.doc"})
+    assert r.error and "convert" in r.error.lower() and r.content == ""
 
 
 # ── run_shell (Unix-gated, mirrors test_sandbox.py) ───────────────────────────

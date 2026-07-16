@@ -13,6 +13,16 @@ and reading PDFs directly.
   Uses `pypdf` (new **`[pdf]`** extra; lazy-imported — a missing dep returns an install hint, an
   image-only/scanned PDF returns a clear "no extractable text / OCR required" message). Text files are
   byte-identical to before.
+- **`read_file` reads Word and Excel too** — `.docx`, `.doc`, `.xlsx`, `.xls`. One unified detector
+  (`_detect_kind`) routes by extension and then by magic bytes (ZIP → peek for `word/document.xml` /
+  `xl/workbook.xml`; OLE → peek streams), so a mis-named or extensionless document is still handled.
+  Extractors: **`.docx`** via the stdlib (zip + XML — **no dependency**); **`.xlsx`** via `openpyxl`
+  (new **`[xlsx]`**); **`.xls`** via `xlrd` (**`[xls]`**); **`.doc`** via `olefile` (**`[doc]`**) —
+  a best-effort FIB/piece-table parse that returns a clear "convert to `.docx`" message rather than
+  garbage when a legacy file can't be parsed. Spreadsheets render as tab-separated rows per sheet;
+  each format returns an install hint when its (lazy-imported) extra is absent. **`[office]`** is the
+  convenience umbrella (`pypdf` + `openpyxl` + `xlrd` + `olefile`). `.pptx`/`.ppt` are intentionally
+  out of scope (reliable extraction needs an external converter such as LibreOffice).
 
 ### Fixed
 - **Narrated-but-never-taken actions:** small gateway models often reply "Let's read the file…"
